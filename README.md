@@ -2,7 +2,7 @@
 
 Cloudflare Worker + Cloudflare Workflows runtime used by Manhali to execute background jobs reliably.
 
-This package is the workflow runtime for the monorepo. It receives typed events from `@shahin/workflows-sdk`, starts the correct workflow class, calls the backend internal execution endpoints, and recovers permanently failed jobs through Cloudflare Queues.
+This package is the workflow runtime for the monorepo. It receives typed events from `@abshahin/workflows-sdk`, starts the correct workflow class, calls the backend internal execution endpoints, and recovers permanently failed jobs through Cloudflare Queues.
 
 Related SDK: `https://github.com/aashahin/workflows-sdk`
 
@@ -36,7 +36,7 @@ The full system is split across three layers.
 
 ### 1. Producer layer: backend + SDK
 
-- The backend creates workflow jobs through `@shahin/workflows-sdk` (`https://github.com/aashahin/workflows-sdk`)
+- The backend creates workflow jobs through `@abshahin/workflows-sdk` (`https://github.com/aashahin/workflows-sdk`)
 - The SDK sends event batches over HTTP to this worker's `/dispatch` endpoint
 - Event contracts are shared and typed across producer and runtime
 
@@ -474,7 +474,7 @@ This separation keeps event production, orchestration, and business execution de
 
 If you want to extend the worker, keep changes aligned with these conventions:
 
-- Add new event contracts in `@shahin/workflows-sdk` first
+- Add new event contracts in `@abshahin/workflows-sdk` first
 - Update worker routing in `src/index.ts`
 - Implement the workflow in `src/workflows/`
 - Keep backend execution endpoints explicit and idempotent

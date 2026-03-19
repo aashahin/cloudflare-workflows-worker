@@ -2,7 +2,11 @@
 // Cloudflare Worker that receives dispatched workflow events and starts
 // the appropriate Workflow instance.
 
-import { EMAIL_EVENTS, NOTIFICATION_EVENTS, PAYMENT_EVENTS } from "@shahin/workflows-sdk";
+import {
+  EMAIL_EVENTS,
+  NOTIFICATION_EVENTS,
+  PAYMENT_EVENTS,
+} from "@abshahin/workflows-sdk";
 import type { Env } from "./env.js";
 import {
   type FailedEventMessage,

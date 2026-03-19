@@ -1,7 +1,7 @@
 // ─── Notification Workflow ────────────────────────────────────────────────────
 // Cloudflare Workflow that processes notification events.
 
-import { NOTIFICATION_EVENTS } from "@shahin/workflows-sdk";
+import { NOTIFICATION_EVENTS } from "@abshahin/workflows-sdk";
 import {
   WorkflowEntrypoint,
   type WorkflowEvent,

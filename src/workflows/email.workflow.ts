@@ -2,7 +2,7 @@
 // Cloudflare Workflow that processes email events.
 // Each event type maps to a step that calls the backend email service.
 
-import { EMAIL_EVENTS } from "@shahin/workflows-sdk";
+import { EMAIL_EVENTS } from "@abshahin/workflows-sdk";
 import {
   WorkflowEntrypoint,
   type WorkflowEvent,
