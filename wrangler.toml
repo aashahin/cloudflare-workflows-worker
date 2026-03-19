@@ -1,0 +1,48 @@
+#:schema node_modules/wrangler/config-schema.json
+
+name = "manhali-workflows-worker"
+main = "src/index.ts"
+compatibility_date = "2026-03-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ─── Workflows ────────────────────────────────────────────────────────────────
+# Each workflow binding maps to a Workflow class exported from the worker.
+
+[[workflows]]
+name = "manhali-email-workflow"
+binding = "EMAIL_WORKFLOW"
+class_name = "EmailWorkflow"
+
+[[workflows]]
+name = "manhali-notification-workflow"
+binding = "NOTIFICATION_WORKFLOW"
+class_name = "NotificationWorkflow"
+
+[[workflows]]
+name = "manhali-payment-workflow"
+binding = "PAYMENT_WORKFLOW"
+class_name = "PaymentWorkflow"
+
+# ─── Queues (failed event retry) ──────────────────────────────────────────────
+# Failed workflow events are sent to a Queue for automatic retry with
+# progressive delays. After max_retries, messages go to a dead-letter queue
+# for manual inspection via the Cloudflare dashboard.
+
+[[queues.producers]]
+binding = "FAILED_EVENTS_QUEUE"
+queue = "manhali-failed-events"
+
+[[queues.consumers]]
+queue = "manhali-failed-events"
+max_retries = 10
+dead_letter_queue = "manhali-failed-events-dlq"
+max_batch_size = 10
+max_batch_timeout = 30
+
+# ─── Environment variables (secrets set via `wrangler secret put`) ────────────
+[vars]
+ENVIRONMENT = "development"
+
+# ─── Dev settings ─────────────────────────────────────────────────────────────
+[dev]
+port = 8787

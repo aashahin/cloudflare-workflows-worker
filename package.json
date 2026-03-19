@@ -1,0 +1,34 @@
+{
+  "name": "workflows-worker",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Cloudflare Worker runtime for routing and retrying background workflows.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aashahin/cloudflare-workflows-worker.git"
+  },
+  "homepage": "https://github.com/aashahin/cloudflare-workflows-worker#readme",
+  "keywords": [
+    "cloudflare",
+    "cloudflare-workers",
+    "cloudflare-workflows",
+    "worker",
+    "workflow",
+    "queues",
+    "background-jobs"
+  ],
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "@shahin/workflows-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260101.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.75.0"
+  }
+}
