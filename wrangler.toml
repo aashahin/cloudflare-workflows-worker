@@ -39,6 +39,21 @@ dead_letter_queue = "manhali-failed-events-dlq"
 max_batch_size = 10
 max_batch_timeout = 30
 
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
+
 # ─── Environment variables (secrets set via `wrangler secret put`) ────────────
 [vars]
 ENVIRONMENT = "development"

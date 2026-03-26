@@ -24,7 +24,7 @@
     "tail": "wrangler tail"
   },
   "dependencies": {
-    "@abshahin/workflows-sdk": "workspace:*"
+    "@abshahin/workflows-sdk": "^0.1.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260101.0",
