@@ -7,7 +7,7 @@
 // message.attempts increments naturally on each failure and message.retry()
 // applies the correct progressive delay from the schedule.
 //
-// Retry schedule (10 attempts max, controlled by wrangler.toml max_retries):
+// Retry schedule (10 attempts max, controlled by wrangler.jsonc max_retries):
 //   1m, 3m, 5m, 10m, 15m, 20m, 30m, 45m, 60m, 90m
 
 import type { Env } from "../env.js";
@@ -18,8 +18,8 @@ import { callBackendService, isNonRetryableFailure } from "./backend.js";
 export interface FailedEventMessage {
   /** Original event ID */
   eventId: string;
-  /** Workflow type: "email" | "notification" | "payment" */
-  workflowType: "email" | "notification" | "payment";
+  /** Workflow type: "email" | "notification" | "payment" | "whatsapp" */
+  workflowType: "email" | "notification" | "payment" | "whatsapp";
   /** Event name (e.g. "email/invitation") */
   eventName: string;
   /** Original payload data */
@@ -60,7 +60,7 @@ export async function storeFailedEvent(
   queue: Queue,
   params: {
     eventId: string;
-    workflowType: "email" | "notification" | "payment";
+    workflowType: "email" | "notification" | "payment" | "whatsapp";
     eventName: string;
     data: Record<string, unknown>;
     idempotencyKey: string;
@@ -88,7 +88,7 @@ export async function storeFailedEvent(
 // ─── Process a batch of failed event messages (queue consumer) ───────────────
 // Calls the backend directly. On success → ack. On failure → message.retry()
 // with progressive delay from RETRY_DELAYS_SECONDS based on message.attempts.
-// After max_retries (wrangler.toml), Cloudflare routes to the DLQ.
+// After max_retries (wrangler.jsonc), Cloudflare routes to the DLQ.
 
 export async function processFailedEventBatch(
   batch: MessageBatch<FailedEventMessage>,
@@ -120,7 +120,7 @@ export async function processFailedEventBatch(
         console.error(
           `[FailedEvents] Non-retryable error for ${record.eventId} (${record.eventName}) — dropping: ${err instanceof Error ? err.message : String(err)}`,
         );
-        return;
+        continue;
       }
 
       const delay = getRetryDelay(message.attempts);
@@ -131,7 +131,7 @@ export async function processFailedEventBatch(
       );
 
       // message.attempts increments on each delivery. After max_retries
-      // (configured in wrangler.toml), Cloudflare dead-letters automatically.
+      // (configured in wrangler.jsonc), Cloudflare dead-letters automatically.
       message.retry({ delaySeconds: delay });
     }
   }

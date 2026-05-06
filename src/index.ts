@@ -6,6 +6,7 @@ import {
   EMAIL_EVENTS,
   NOTIFICATION_EVENTS,
   PAYMENT_EVENTS,
+  WHATSAPP_EVENTS,
 } from "@abshahin/workflows-sdk";
 import type { Env } from "./env.js";
 import {
@@ -17,6 +18,7 @@ import {
 export { EmailWorkflow } from "./workflows/email.workflow.js";
 export { NotificationWorkflow } from "./workflows/notification.workflow.js";
 export { PaymentWorkflow } from "./workflows/payment.workflow.js";
+export { WhatsappWorkflow } from "./workflows/whatsapp.workflow.js";
 
 // ─── Security helpers ────────────────────────────────────────────────────────────────────
 
@@ -220,10 +222,12 @@ const NOTIFICATION_EVENT_NAMES = new Set<string>(
   Object.values(NOTIFICATION_EVENTS),
 );
 const PAYMENT_EVENT_NAMES = new Set<string>(Object.values(PAYMENT_EVENTS));
+const WHATSAPP_EVENT_NAMES = new Set<string>(Object.values(WHATSAPP_EVENTS));
 
 function resolveWorkflow(eventName: string, env: Env): Workflow | null {
   if (EMAIL_EVENT_NAMES.has(eventName)) return env.EMAIL_WORKFLOW;
   if (NOTIFICATION_EVENT_NAMES.has(eventName)) return env.NOTIFICATION_WORKFLOW;
   if (PAYMENT_EVENT_NAMES.has(eventName)) return env.PAYMENT_WORKFLOW;
+  if (WHATSAPP_EVENT_NAMES.has(eventName)) return env.WHATSAPP_WORKFLOW;
   return null;
 }

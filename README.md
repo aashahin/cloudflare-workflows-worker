@@ -18,17 +18,19 @@ Related SDK: `https://github.com/aashahin/workflows-sdk`
 
 ## Event domains
 
-The worker currently handles three workflow domains:
+The worker currently handles four workflow domains:
 
 - Email workflows
 - Notification workflows
 - Payment workflows
+- WhatsApp workflows
 
-Bindings are configured in `wrangler.toml`:
+Bindings are configured in `wrangler.jsonc`:
 
 - `EMAIL_WORKFLOW`
 - `NOTIFICATION_WORKFLOW`
 - `PAYMENT_WORKFLOW`
+- `WHATSAPP_WORKFLOW`
 
 ## Architecture
 
@@ -75,15 +77,18 @@ flowchart LR
   C --> D[EmailWorkflow]
   C --> E[NotificationWorkflow]
   C --> F[PaymentWorkflow]
-  D -->|POST /workflows/execute/*| G[Backend execution endpoint]
-  E -->|POST /workflows/execute/*| G
-  F -->|POST /workflows/execute/*| G
-  D -. exhausted retries .-> H[Failed events queue]
-  E -. exhausted retries .-> H
-  F -. exhausted retries .-> H
-  H --> I[Queue consumer]
-  I -->|direct backend retry| G
-  H -->|max retries exceeded| J[Dead-letter queue]
+  C --> G[WhatsappWorkflow]
+  D -->|POST /workflows/execute/*| H[Backend execution endpoint]
+  E -->|POST /workflows/execute/*| H
+  F -->|POST /workflows/execute/*| H
+  G -->|POST /workflows/execute/*| H
+  D -. exhausted retries .-> I[Failed events queue]
+  E -. exhausted retries .-> I
+  F -. exhausted retries .-> I
+  G -. exhausted retries .-> I
+  I --> J[Queue consumer]
+  J -->|direct backend retry| H
+  I -->|max retries exceeded| K[Dead-letter queue]
 ```
 
 ## Repository layout
@@ -99,6 +104,7 @@ src/
     email.workflow.ts        Email workflow implementation
     notification.workflow.ts Notification workflow implementation
     payment.workflow.ts      Payment workflow implementation
+    whatsapp.workflow.ts     WhatsApp workflow implementation
 ```
 
 ## HTTP API
@@ -308,7 +314,7 @@ The consumer is configured with `max_retries = 10`, so later attempts use the fi
 
 ### Queue consumer settings
 
-From `wrangler.toml`:
+From `wrangler.jsonc`:
 
 - `max_retries = 10`
 - `dead_letter_queue = "manhali-failed-events-dlq"`
@@ -336,6 +342,10 @@ From `wrangler.toml`:
 ### Payment events
 
 - `payment/process-payout`
+
+### WhatsApp events
+
+- `whatsapp/send-template`
 
 The payment workflow currently orchestrates payout processing in three backend steps:
 
@@ -393,7 +403,7 @@ AUTH_TOKEN=replace-with-a-shared-secret
 BACKEND_URL=http://localhost:<backend-port>
 ```
 
-The `ENVIRONMENT` variable is already defined in `wrangler.toml` for local development.
+The `ENVIRONMENT` variable is already defined in `wrangler.jsonc` for local development.
 
 ### Run locally
 
@@ -421,7 +431,7 @@ bun run tail
 
 Before deploying:
 
-1. Provision the Cloudflare Workflows and Queue resources referenced by `wrangler.toml`.
+1. Provision the Cloudflare Workflows and Queue resources referenced by `wrangler.jsonc`.
 2. Set the required worker secrets.
 3. Make sure the backend exposes the internal callback routes.
 4. Verify the worker and backend share the same `AUTH_TOKEN`.
@@ -461,6 +471,8 @@ bun run deploy
 - `apps/backend` produces and executes the business operations
 - `packages/workflows-sdk` defines the client and event contracts
 - This package provides the Cloudflare runtime and recovery layer
+
+The backend currently executes WhatsApp business sends asynchronously through this worker, while manual WhatsApp test sends and manual delivery retries remain direct backend operations.
 
 This separation keeps event production, orchestration, and business execution decoupled.
 
