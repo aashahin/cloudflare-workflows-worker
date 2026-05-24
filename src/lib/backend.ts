@@ -54,8 +54,11 @@ export async function callBackendService(
     const NON_RETRYABLE_STATUSES = [400, 404, 409, 422];
 
     if (NON_RETRYABLE_STATUSES.includes(response.status)) {
+      // Prefix the message with "NonRetryableError" so the failure is still
+      // detectable after Cloudflare re-throws it across the step boundary,
+      // where the error's prototype/name may not survive but the message does.
       throw new NonRetryableError(
-        `Backend ${path} failed (${response.status}): ${body}`,
+        `NonRetryableError: Backend ${path} failed (${response.status}): ${body}`,
       );
     }
 

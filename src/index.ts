@@ -73,14 +73,6 @@ const ManhaliWorkflowBase: WorkflowBaseClass =
 
 export class ManhaliWorkflow extends ManhaliWorkflowBase {}
 
-// Compatibility exports for workflow instances created before the generic
-// registry refactor. Wrangler now binds only ManhaliWorkflow, but keeping these
-// class names available makes old class_name references safer during rollout.
-export class EmailWorkflow extends ManhaliWorkflowBase {}
-export class NotificationWorkflow extends ManhaliWorkflowBase {}
-export class PaymentWorkflow extends ManhaliWorkflowBase {}
-export class WhatsappWorkflow extends ManhaliWorkflowBase {}
-
 const dispatchHandler = createCloudflareDispatchHandler<Env>({
   registry: manhaliWorkflowRegistry,
   auth: {
@@ -117,13 +109,6 @@ export default {
     }
 
     return dispatchHandler.fetch(request, env);
-  },
-
-  scheduled(
-    controller: ScheduledController,
-    env: Env,
-  ): Promise<{ dispatched: number }> {
-    return dispatchHandler.scheduled(controller, env);
   },
 
   async queue(
