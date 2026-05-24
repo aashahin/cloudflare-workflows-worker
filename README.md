@@ -1,93 +1,55 @@
-# Workflows Worker
+# Cloudflare Workflows Worker
 
-Cloudflare Worker + Cloudflare Workflows runtime used by Manhali to execute background jobs reliably.
+Reusable Cloudflare Worker runtime for dispatching SDK workflow envelopes into Cloudflare Workflows.
 
-This package is the workflow runtime for the monorepo. It receives typed events from `@abshahin/workflows-sdk`, starts one generic SDK-registry workflow class, calls the backend internal execution endpoints, and recovers exhausted backend steps through Cloudflare Queues.
+This package is intended to be adapted per project. It exposes a small authenticated HTTP dispatcher, starts Cloudflare Workflow instances from `@abshahin/workflows-sdk` envelopes, calls a project callback service for side effects, and retries exhausted callback steps through Cloudflare Queues.
 
 Related SDK: `https://github.com/aashahin/workflows-sdk`
 
-## What this service does
+## What This Worker Provides
 
-- Accepts authenticated event batches at `POST /dispatch`
-- Routes events through the shared `@manhali/workflows` registry
-- Supports delayed execution with `step.sleep(...)`
-- Retries transient backend failures inside the workflow runtime
-- Pushes exhausted workflow failures into a retry queue
-- Re-dispatches failed events from a queue consumer with progressive backoff
-- Exposes minimal health and operational endpoints
+- `POST /dispatch` for authenticated workflow batches
+- `GET /status/:id?name=<workflowName>` for Workflow instance status
+- `GET /health` for liveness checks
+- Optional per-isolate rate limiting and request-size checks through the SDK dispatcher
+- One generic Cloudflare Workflow class backed by an SDK workflow registry
+- Queue-based recovery for callback steps that keep failing after Workflow retries
 
-## Workflow Registry
+## Expected Project Wiring
 
-The worker currently runs the Manhali workflow registry from `@manhali/workflows`, which defines:
+To use this worker in your own project, provide:
 
-- Email workflows
-- Notification workflows
-- Payment workflows
-- WhatsApp workflows
+- an SDK workflow registry package
+- one Cloudflare Workflow binding in `wrangler.jsonc`
+- a callback service reachable through `BACKEND_URL`
+- a shared bearer token in `AUTH_TOKEN`
+- a Cloudflare Queue and DLQ for failed callback retries
 
-One Cloudflare Workflow binding is configured in `wrangler.jsonc`:
-
-- `WORKFLOW`
+The default source in this repository is an example integration. Before publishing or reusing it as a template, replace project-specific registry imports, workflow class names, routes, queue names, and package dependencies with names for your own project.
 
 ## Architecture
 
-The full system is split across three layers.
-
-### 1. Producer layer: backend + SDK
-
-- The backend creates workflow jobs through `@abshahin/workflows-sdk` (`https://github.com/aashahin/workflows-sdk`)
-- The SDK sends event batches over HTTP to this worker's `/dispatch` endpoint
-- Event contracts and workflow definitions come from `@manhali/workflows`
-
-### 2. Runtime layer: this worker
-
-- Validates incoming payloads
-- Authenticates requests with a bearer token
-- Applies lightweight per-isolate rate limiting
-- Resolves every registered event to the generic `WORKFLOW` binding
-- Starts a Cloudflare Workflow instance per event
-
-### 3. Execution layer: backend callback
-
-- Each workflow calls the backend internal endpoint at `POST /workflows/execute/:path`
-- The backend restores tenant context when relevant
-- Existing domain services execute the actual side effects
-- The backend uses an execution log to avoid duplicate side effects when retries happen
-
-## End-to-end flow
-
-1. Backend code creates a job through the SDK.
-2. The SDK sends an authenticated `POST /dispatch` request.
-3. This worker validates the batch and starts the generic `ManhaliWorkflow`.
-4. The workflow optionally delays execution.
-5. The workflow calls the backend callback endpoint.
-6. Cloudflare Workflows retries transient step failures.
-7. If the workflow still fails, the event is persisted to Cloudflare Queues for delayed recovery.
-8. The queue consumer retries the backend call directly until success or dead-lettering.
-
-## Architecture diagram
-
 ```mermaid
 flowchart LR
-  A[Backend producer] -->|SDK dispatch| B[Workflows SDK]
+  A[Producer service] -->|SDK dispatch| B[Workflows SDK]
   B -->|POST /dispatch| C[Cloudflare Worker]
-  C --> D[ManhaliWorkflow]
-  D -->|registry lookup| E[@manhali/workflows]
-  E -->|POST /workflows/execute/*| H[Backend execution endpoint]
-  E -. exhausted retries .-> I[Failed events queue]
-  I --> J[Queue consumer]
-  J -->|direct backend retry| H
-  I -->|max retries exceeded| K[Dead-letter queue]
+  C --> D[Generic Workflow class]
+  D -->|registry lookup| E[Project workflow registry]
+  E -->|POST /workflows/execute/*| F[Callback service]
+  E -. exhausted retries .-> G[Failed events queue]
+  G --> H[Queue consumer]
+  H -->|direct callback retry| F
+  G -->|max retries exceeded| I[Dead-letter queue]
 ```
 
-## Repository layout
+## Repository Layout
 
 ```text
 src/
   env.ts                     Typed Cloudflare bindings
-  index.ts                   HTTP entrypoint + queue consumer
+  index.ts                   HTTP entrypoint, Workflow class, queue consumer
   lib/
-    backend.ts               Backend callback helpers
+    backend.ts               Callback service helper
     failed-events.ts         Queue persistence + retry processing
 ```
 
@@ -95,7 +57,7 @@ src/
 
 ### `POST /dispatch`
 
-Starts workflow instances for a batch of events.
+Starts Workflow instances for a batch of SDK envelopes.
 
 Authentication:
 
@@ -104,9 +66,9 @@ Authentication:
 Behavior:
 
 - Rejects payloads larger than 1 MB
-- Requires a JSON body with an `events` array
-- Accepts SDK workflow envelopes only
-- Returns created workflow IDs plus per-item errors for rejected events
+- Requires `{ "events": WorkflowEventEnvelope[] }`
+- Creates Cloudflare Workflow instances in batches when the binding supports `createBatch`
+- Returns created instance IDs plus per-item errors for rejected events
 
 Example request:
 
@@ -122,7 +84,8 @@ Example request:
         "tenantId": "tenant_123",
         "email": "user@example.com",
         "otpCode": "123456"
-      }
+      },
+      "createdAt": "2026-05-24T09:00:00.000Z"
     }
   ]
 }
@@ -132,53 +95,29 @@ Example response:
 
 ```json
 {
-  "ids": ["evt_01"]
-}
-```
-
-Example `curl` command:
-
-```bash
-curl -X POST "$WORKER_URL/dispatch" \
-  -H "Authorization: Bearer $AUTH_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "events": [
-      {
-        "id": "evt_demo_01",
-        "idempotencyKey": "demo:email:reset-password:user-42",
-        "traceId": "trace_demo_01",
-        "name": "email/reset-password",
-        "payload": {
-          "tenantId": "tenant_123",
-          "email": "user@example.com",
-          "userName": "John Doe",
-          "otpCode": "123456"
-        }
-      }
-    ]
-  }'
-```
-
-Partial-failure response shape:
-
-```json
-{
   "ids": ["evt_01"],
-  "errors": [
+  "instances": [
     {
-      "id": "evt_02",
-      "error": "Unknown event: something/unsupported"
+      "id": "evt_01",
+      "name": "email/reset-password",
+      "status": "queued"
     }
   ]
 }
+```
+
+### `GET /status/:id`
+
+Returns normalized Workflow status. Include `name=<workflowName>` when you know the workflow name; otherwise the dispatcher searches the configured registry bindings.
+
+```bash
+curl "$WORKER_URL/status/evt_01?name=email/reset-password" \
+  -H "Authorization: Bearer $AUTH_TOKEN"
 ```
 
 ### `GET /health`
 
 Simple liveness endpoint.
-
-Example response:
 
 ```json
 {
@@ -186,206 +125,75 @@ Example response:
 }
 ```
 
-Example `curl` command:
-
-```bash
-curl "$WORKER_URL/health"
-```
-
 ### `GET /failed-events`
 
-Authenticated operational endpoint that exposes queue names used for retry + dead-letter processing.
-
-Authentication:
-
-- `Authorization: Bearer <AUTH_TOKEN>`
-
-Example `curl` command:
+Authenticated operational endpoint that identifies the retry and dead-letter queues configured for this worker.
 
 ```bash
 curl "$WORKER_URL/failed-events" \
   -H "Authorization: Bearer $AUTH_TOKEN"
 ```
 
-## Workflow behavior
+## Workflow Behavior
 
-Each workflow follows the same high-level pattern:
+Project workflow definitions run through `createCloudflareWorkflowEntrypoint()` from `@abshahin/workflows-sdk/cloudflare`.
 
-1. Accept event payload from `/dispatch`
-2. Optionally sleep for `delayMs`
-3. Call the backend execution path through `step.do(...)`
-4. Retry transient failures with Cloudflare Workflows retry policy
-5. Persist exhausted failures to a queue unless the error is non-retryable
+The runner maps:
 
-### Step retry policy
+- `ctx.step()` to Cloudflare `step.do()`
+- `ctx.sleep()` to Cloudflare `step.sleep()` or `step.sleepUntil()`
+- workflow retry/timeout defaults to Cloudflare step config
+- `ctx.services` to project runtime services created from Worker env bindings
 
-The workflow step retry policy is:
+Delayed envelopes use `scheduledAt` or `delayMs`; the Workflow sleeps before executing user code.
 
-- Retry limit: `3`
-- Initial delay: `1 second`
-- Backoff: `exponential`
+## Callback Service
 
-This retry layer is separate from the queue-based failed-event recovery.
+The example runtime calls:
 
-### Backend callback behavior
+```text
+POST {BACKEND_URL}/workflows/execute/:path
+```
 
-All workflow classes call the backend through shared helpers in `src/lib/backend.ts`.
-
-The worker forwards these headers when available:
+Headers forwarded to the callback service:
 
 - `Authorization: Bearer <AUTH_TOKEN>`
 - `X-Trace-Id`
 - `X-Workflow-Event-Id`
 - `x-tenant-id` when `tenantId` exists in the payload
 
-Non-retryable backend statuses are currently:
+Permanent callback failures should return client statuses such as `400`, `404`, `409`, or `422`. Transient failures should use `429` or `5xx` so Workflow and queue retries can continue.
 
-- `404`
-- `409`
-- `422`
+## Failed-Event Recovery
 
-Other failures remain retryable, including:
+When a callback step still fails after Workflow retries, the runtime sends a failed-event message to `FAILED_EVENTS_QUEUE`.
 
-- `400`
-- `401`
-- `403`
-- `429`
-- all `5xx` responses
+Queue recovery flow:
 
-## Failed-event recovery
+1. A failed callback event is sent to the retry queue with a delay.
+2. The queue consumer calls the callback service directly.
+3. On success, the message is acknowledged.
+4. On retryable failure, the message is requeued with progressive delay.
+5. After `max_retries`, Cloudflare moves the message to the DLQ configured in `wrangler.jsonc`.
 
-When a workflow exhausts its internal retries, the worker stores the event in `FAILED_EVENTS_QUEUE`.
+The consumer accepts both the current generic failed-event shape and the earlier `eventName`/`data` shape to make deploy rollouts safer.
 
-### Why Queues are used
+## Local Development
 
-Cloudflare Queues give the worker a better recovery path than ad hoc storage-based retry loops:
-
-- Native delayed retries
-- Automatic message delivery to the consumer
-- Built-in dead-letter queue support
-- No polling cron required
-- No custom visibility timeout bookkeeping
-
-### Queue flow
-
-1. The workflow stores the failed event in `manhali-failed-events`.
-2. The first queue delivery is delayed by 60 seconds.
-3. The queue consumer calls the backend directly.
-4. On success, the message is acknowledged.
-5. On retryable failure, the message is requeued with a progressive delay.
-6. After `max_retries`, Cloudflare moves the message to `manhali-failed-events-dlq`.
-
-### Retry schedule
-
-Current delay schedule implemented in `src/lib/failed-events.ts`:
-
-- `1m`
-- `5m`
-- `15m`
-- `30m`
-- `45m`
-- `60m`
-- `90m`
-- `120m`
-
-The consumer is configured with `max_retries = 10`, so later attempts use the final capped delay value.
-
-### Queue consumer settings
-
-From `wrangler.jsonc`:
-
-- `max_retries = 10`
-- `dead_letter_queue = "manhali-failed-events-dlq"`
-- `max_batch_size = 10`
-- `max_batch_timeout = 30`
-
-## Event catalog
-
-### Email events
-
-- `email/reset-password`
-- `email/new-account-credentials`
-- `email/change-email-verification`
-- `email/verification`
-- `email/cart-recovery`
-- `email/invitation`
-- `email/enrollment-confirmation`
-- `email/trial-reminder`
-
-### Notification events
-
-- `notification/create`
-- `notification/bulk-create`
-
-### Payment events
-
-- `payment/process-payout`
-
-### WhatsApp events
-
-- `whatsapp/send-template`
-
-The payment workflow currently orchestrates payout processing in three backend steps:
-
-1. Validate payout
-2. Process payout
-3. Notify payout status
-
-## Security model
-
-The worker intentionally keeps its trust model simple:
-
-- Shared bearer token between the backend and the worker
-- Constant-time token comparison to reduce timing attack leakage
-- Input shape validation at the dispatch boundary
-- Lightweight in-memory rate limiting on `/dispatch`
-
-Important limitation:
-
-- The rate limiter is per isolate, not global. It helps contain accidental or abusive loops but is not a substitute for a distributed rate-limiting layer.
-
-## Observability
-
-The worker currently provides lightweight observability primitives:
-
-- Structured console logging for dispatch, retry, and failure paths
-- Trace propagation using `X-Trace-Id`
-- Queue / DLQ visibility through Cloudflare dashboard metrics
-- Operational endpoint at `/failed-events`
-
-For production use, add external alerting around DLQ growth and repeated backend callback failures.
-
-## Local development
-
-### Prerequisites
-
-- Bun
-- Cloudflare account + Wrangler access
-- The monorepo dependencies installed
-- A reachable backend instance for workflow callback execution
-
-### Install dependencies
-
-From the repository root:
+Install dependencies:
 
 ```bash
 bun install
 ```
 
-### Configure local secrets
-
-Create `apps/workers/workflows-worker/.dev.vars` with:
+Create `.dev.vars` in this package directory:
 
 ```dotenv
 AUTH_TOKEN=replace-with-a-shared-secret
-BACKEND_URL=http://localhost:<backend-port>
+BACKEND_URL=http://localhost:<callback-service-port>
 ```
 
-The `ENVIRONMENT` variable is already defined in `wrangler.jsonc` for local development.
-
-### Run locally
-
-From this package directory:
+Run locally:
 
 ```bash
 bun run dev
@@ -397,25 +205,16 @@ Default local port:
 8787
 ```
 
-### Useful commands
-
-```bash
-bun run dev
-bun run deploy
-bun run tail
-```
-
 ## Deployment
 
 Before deploying:
 
-1. Provision the Cloudflare Workflows and Queue resources referenced by `wrangler.jsonc`.
-2. Set the required worker secrets.
-3. Make sure the backend exposes the internal callback routes.
-4. Verify the worker and backend share the same `AUTH_TOKEN`.
-5. Confirm the backend URL is reachable from the worker environment.
+1. Configure `wrangler.jsonc` with your route, Workflow binding, Queue, and DLQ names.
+2. Set `AUTH_TOKEN` and `BACKEND_URL` with Wrangler secrets.
+3. Make sure your callback service exposes the execution endpoint expected by your workflow definitions.
+4. Confirm the callback service is reachable from Cloudflare Workers.
 
-Set secrets with Wrangler:
+Set secrets:
 
 ```bash
 wrangler secret put AUTH_TOKEN
@@ -428,50 +227,41 @@ Deploy:
 bun run deploy
 ```
 
-## Required configuration
+## Required Configuration
 
-### Worker secrets
+Worker secrets:
 
 - `AUTH_TOKEN`
 - `BACKEND_URL`
 
-### Worker vars
+Worker vars:
 
 - `ENVIRONMENT`
 
-### Related backend env
+Producer service env:
 
 - `WORKFLOWS_WORKER_URL`
 - `WORKFLOWS_AUTH_TOKEN`
 
-## Relationship to the rest of the monorepo
+## Customization Checklist
 
-- `apps/backend` produces and executes the business operations
-- `packages/workflows-sdk` defines the client and event contracts
-- This package provides the Cloudflare runtime and recovery layer
+When adapting this worker:
 
-The backend currently executes WhatsApp business sends asynchronously through this worker, while manual WhatsApp test sends and manual delivery retries remain direct backend operations.
+- Replace the example project registry import with your own registry package.
+- Replace the example Workflow class name and `wrangler.jsonc` `class_name` if desired.
+- Replace route, Workflow, Queue, and DLQ names in `wrangler.jsonc`.
+- Keep workflow step names stable once deployed because Cloudflare uses them for durable step state.
+- Keep callback execution idempotent by using `X-Workflow-Event-Id`.
+- Add alerting around DLQ growth and repeated callback failures.
 
-This separation keeps event production, orchestration, and business execution decoupled.
+## Verification
 
-## Operational notes
+Useful checks:
 
-- Deterministic idempotency keys are not used as Cloudflare Workflow instance IDs because completed instance IDs remain reserved.
-- Queue retries call the backend directly instead of creating a new workflow instance so Cloudflare Queue attempt counters drive the backoff correctly.
-- The backend is responsible for final side-effect idempotency through execution logging.
-
-## Contributing
-
-If you want to extend the worker, keep changes aligned with these conventions:
-
-- Add new event contracts and definitions in `@manhali/workflows` first
-- Keep this worker generic; avoid adding Manhali event switches here
-- Keep the `WORKFLOW` binding pointed at `ManhaliWorkflow`
-- Keep backend execution endpoints explicit and idempotent
-- Treat `404`, `409`, and `422` as permanently broken inputs unless the backend contract changes
-
-If you add a new workflow domain, update this README's event catalog and operational notes in the same change.
+```bash
+bunx tsc --noEmit -p tsconfig.json
+```
 
 ## License
 
-MIT. Add the `LICENSE` file in the published `cloudflare-workflows-worker` repository.
+MIT.
