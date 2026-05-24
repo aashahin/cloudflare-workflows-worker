@@ -20,6 +20,11 @@ export interface FailedEventMessage extends ManhaliFailedWorkflowEvent {
   createdAt: string;
 }
 
+interface FailedEventBackendStep {
+  backendPath: string;
+  backendEventId: string;
+}
+
 interface LegacyFailedEventMessage {
   eventId: string;
   workflowType?: string;
@@ -71,6 +76,7 @@ export async function storeFailedEvent(
     workflowName: params.workflowName,
     backendPath: params.backendPath,
     backendEventId: params.backendEventId,
+    backendSteps: params.backendSteps,
     payload: params.payload,
     idempotencyKey: params.idempotencyKey,
     error: params.error,
@@ -99,14 +105,17 @@ export async function processFailedEventBatch(
     const traceId = `${record.eventId}:retry:${message.attempts}`;
 
     try {
-      // Call backend directly — same path the workflow step would use
-      await callBackendService(
-        env,
-        record.backendPath,
-        record.payload,
-        traceId,
-        record.backendEventId,
-      );
+      // Call backend directly for the failed step and any dependent steps that
+      // would have run after it in the original workflow.
+      for (const step of getBackendSteps(record)) {
+        await callBackendService(
+          env,
+          step.backendPath,
+          record.payload,
+          traceId,
+          step.backendEventId,
+        );
+      }
 
       message.ack();
       console.log(
@@ -152,4 +161,17 @@ function normalizeFailedEventMessage(
     error: message.error,
     createdAt: message.createdAt,
   };
+}
+
+function getBackendSteps(record: FailedEventMessage): FailedEventBackendStep[] {
+  if (Array.isArray(record.backendSteps) && record.backendSteps.length > 0) {
+    return record.backendSteps;
+  }
+
+  return [
+    {
+      backendPath: record.backendPath,
+      backendEventId: record.backendEventId,
+    },
+  ];
 }

@@ -34,6 +34,7 @@ function timingSafeEqual(a: string, b: string): boolean {
 }
 
 function verifyAuth(header: string | null, expectedToken: string): boolean {
+  if (!expectedToken) return false;
   if (!header?.startsWith("Bearer ")) return false;
   return timingSafeEqual(header.slice(7), expectedToken);
 }
@@ -61,13 +62,14 @@ function createManhaliWorkflowServices(env: Env): ManhaliWorkflowServices {
 
 type WorkflowBaseClass = abstract new (...args: any[]) => object;
 
-const ManhaliWorkflowBase: WorkflowBaseClass = createCloudflareWorkflowEntrypoint<
-  Env,
-  ManhaliWorkflowServices
->(WorkflowEntrypoint<Env>, {
-  registry: manhaliWorkflowRegistry,
-  services: createManhaliWorkflowServices,
-});
+const ManhaliWorkflowBase: WorkflowBaseClass =
+  createCloudflareWorkflowEntrypoint<Env, ManhaliWorkflowServices>(
+    WorkflowEntrypoint<Env>,
+    {
+      registry: manhaliWorkflowRegistry,
+      services: createManhaliWorkflowServices,
+    },
+  );
 
 export class ManhaliWorkflow extends ManhaliWorkflowBase {}
 
@@ -85,10 +87,6 @@ const dispatchHandler = createCloudflareDispatchHandler<Env>({
     bearerToken: (env) => env.AUTH_TOKEN,
   },
   maxRequestBytes: 1_048_576,
-  rateLimit: {
-    max: 500,
-    windowMs: 60_000,
-  },
   resolveWorkflow(eventName, env) {
     return manhaliWorkflowRegistry.has(eventName) ? env.WORKFLOW : null;
   },
@@ -99,6 +97,12 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/failed-events" && request.method === "GET") {
+      if (!env.AUTH_TOKEN) {
+        return new Response("Workflow worker auth is not configured", {
+          status: 500,
+        });
+      }
+
       if (!verifyAuth(request.headers.get("Authorization"), env.AUTH_TOKEN)) {
         return new Response("Unauthorized", { status: 401 });
       }

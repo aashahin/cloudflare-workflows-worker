@@ -172,7 +172,8 @@ Queue recovery flow:
 
 1. A failed callback event is sent to the retry queue with a delay.
 2. The queue consumer calls the callback service directly.
-3. On success, the message is acknowledged.
+3. On success, the message is acknowledged. Multi-step workflows may include
+   remaining callback steps so recovery can continue the original sequence.
 4. On retryable failure, the message is requeued with progressive delay.
 5. After `max_retries`, Cloudflare moves the message to the DLQ configured in `wrangler.jsonc`.
 

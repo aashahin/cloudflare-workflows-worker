@@ -48,7 +48,7 @@ export async function callBackendService(
     // Only truly permanent client errors are non-retryable:
     // - 400: malformed or incomplete workflow payload
     // - 404: resource doesn't exist
-    // - 409: conflict (duplicate)
+    // - 409: permanent conflict (transient/not-ready states should use 425)
     // - 422: validation failure (bad input shape)
     // These will never succeed without code or data changes.
     const NON_RETRYABLE_STATUSES = [400, 404, 409, 422];
