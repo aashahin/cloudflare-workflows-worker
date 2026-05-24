@@ -1,7 +1,6 @@
 // ─── Shared Backend Utilities ────────────────────────────────────────────────
 // Common helpers used by all workflow classes.
 
-import type { WorkflowSleepDuration } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../env.js";
 
@@ -66,20 +65,4 @@ export async function callBackendService(
     // - 5xx: transient server errors
     throw new Error(`Backend ${path} failed (${response.status}): ${body}`);
   }
-}
-
-/**
- * Convert milliseconds to a Cloudflare Workflows Duration string.
- * CF `step.sleep()` expects strings like "30 seconds", "5 minutes".
- */
-export function msToDuration(ms: number): WorkflowSleepDuration {
-  const totalSeconds = Math.ceil(ms / 1000);
-  if (totalSeconds <= 0) return "1 second" as WorkflowSleepDuration;
-  if (totalSeconds === 1) return "1 second" as WorkflowSleepDuration;
-  // Use seconds for all values under 1 hour to preserve precision
-  if (totalSeconds < 3600)
-    return `${totalSeconds} seconds` as WorkflowSleepDuration;
-  const minutes = Math.round(totalSeconds / 60);
-  if (minutes === 1) return "1 minute" as WorkflowSleepDuration;
-  return `${minutes} minutes` as WorkflowSleepDuration;
 }

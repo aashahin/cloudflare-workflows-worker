@@ -13,7 +13,7 @@ import {
 } from "@manhali/workflows";
 import type { Env } from "./env.js";
 import {
-  type FailedEventMessage,
+  type FailedEventQueueMessage,
   processFailedEventBatch,
   storeFailedEvent,
 } from "./lib/failed-events.js";
@@ -59,7 +59,9 @@ function createManhaliWorkflowServices(env: Env): ManhaliWorkflowServices {
   };
 }
 
-const ManhaliWorkflowBase = createCloudflareWorkflowEntrypoint<
+type WorkflowBaseClass = abstract new (...args: any[]) => object;
+
+const ManhaliWorkflowBase: WorkflowBaseClass = createCloudflareWorkflowEntrypoint<
   Env,
   ManhaliWorkflowServices
 >(WorkflowEntrypoint<Env>, {
@@ -68,6 +70,14 @@ const ManhaliWorkflowBase = createCloudflareWorkflowEntrypoint<
 });
 
 export class ManhaliWorkflow extends ManhaliWorkflowBase {}
+
+// Compatibility exports for workflow instances created before the generic
+// registry refactor. Wrangler now binds only ManhaliWorkflow, but keeping these
+// class names available makes old class_name references safer during rollout.
+export class EmailWorkflow extends ManhaliWorkflowBase {}
+export class NotificationWorkflow extends ManhaliWorkflowBase {}
+export class PaymentWorkflow extends ManhaliWorkflowBase {}
+export class WhatsappWorkflow extends ManhaliWorkflowBase {}
 
 const dispatchHandler = createCloudflareDispatchHandler<Env>({
   registry: manhaliWorkflowRegistry,
@@ -113,7 +123,7 @@ export default {
   },
 
   async queue(
-    batch: MessageBatch<FailedEventMessage>,
+    batch: MessageBatch<FailedEventQueueMessage>,
     env: Env,
   ): Promise<void> {
     await processFailedEventBatch(batch, env);

@@ -20,6 +20,22 @@ export interface FailedEventMessage extends ManhaliFailedWorkflowEvent {
   createdAt: string;
 }
 
+interface LegacyFailedEventMessage {
+  eventId: string;
+  workflowType?: string;
+  eventName: string;
+  backendPath?: string;
+  backendEventId?: string;
+  data: Record<string, unknown>;
+  idempotencyKey: string;
+  error: string;
+  createdAt: string;
+}
+
+export type FailedEventQueueMessage =
+  | FailedEventMessage
+  | LegacyFailedEventMessage;
+
 // ─── Retry schedule (seconds) — indexed by message.attempts ──────────────────
 
 const RETRY_DELAYS_SECONDS = [
@@ -75,11 +91,11 @@ export async function storeFailedEvent(
 // After max_retries (wrangler.jsonc), Cloudflare routes to the DLQ.
 
 export async function processFailedEventBatch(
-  batch: MessageBatch<FailedEventMessage>,
+  batch: MessageBatch<FailedEventQueueMessage>,
   env: Env,
 ): Promise<void> {
   for (const message of batch.messages) {
-    const record = message.body;
+    const record = normalizeFailedEventMessage(message.body);
     const traceId = `${record.eventId}:retry:${message.attempts}`;
 
     try {
@@ -119,4 +135,21 @@ export async function processFailedEventBatch(
       message.retry({ delaySeconds: delay });
     }
   }
+}
+
+function normalizeFailedEventMessage(
+  message: FailedEventQueueMessage,
+): FailedEventMessage {
+  if ("workflowName" in message) return message;
+
+  return {
+    eventId: message.eventId,
+    workflowName: message.eventName,
+    backendPath: message.backendPath ?? message.eventName,
+    backendEventId: message.backendEventId ?? message.eventId,
+    payload: message.data,
+    idempotencyKey: message.idempotencyKey,
+    error: message.error,
+    createdAt: message.createdAt,
+  };
 }
