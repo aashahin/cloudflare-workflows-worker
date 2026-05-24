@@ -10,29 +10,13 @@
 // Retry schedule (10 attempts max, controlled by wrangler.jsonc max_retries):
 //   1m, 3m, 5m, 10m, 15m, 20m, 30m, 45m, 60m, 90m
 
+import type { ManhaliFailedWorkflowEvent } from "@manhali/workflows";
 import type { Env } from "../env.js";
 import { callBackendService, isNonRetryableFailure } from "./backend.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface FailedEventMessage {
-  /** Original event ID */
-  eventId: string;
-  /** Workflow type: "email" | "notification" | "payment" | "whatsapp" */
-  workflowType: "email" | "notification" | "payment" | "whatsapp";
-  /** Event name (e.g. "email/invitation") */
-  eventName: string;
-  /** Backend execution path to retry. Defaults to eventName for older messages. */
-  backendPath?: string;
-  /** Backend idempotency event ID to retry. Defaults to eventId for older messages. */
-  backendEventId?: string;
-  /** Original payload data */
-  data: Record<string, unknown>;
-  /** Idempotency key */
-  idempotencyKey: string;
-  /** Error message from the permanent failure */
-  error: string;
-  /** ISO timestamp of when this record was created */
+export interface FailedEventMessage extends ManhaliFailedWorkflowEvent {
   createdAt: string;
 }
 
@@ -64,24 +48,14 @@ function getRetryDelay(attempt: number): number {
 
 export async function storeFailedEvent(
   queue: Queue,
-  params: {
-    eventId: string;
-    workflowType: "email" | "notification" | "payment" | "whatsapp";
-    eventName: string;
-    backendPath?: string;
-    backendEventId?: string;
-    data: Record<string, unknown>;
-    idempotencyKey: string;
-    error: string;
-  },
+  params: ManhaliFailedWorkflowEvent,
 ): Promise<void> {
   const message: FailedEventMessage = {
     eventId: params.eventId,
-    workflowType: params.workflowType,
-    eventName: params.eventName,
+    workflowName: params.workflowName,
     backendPath: params.backendPath,
     backendEventId: params.backendEventId,
-    data: params.data,
+    payload: params.payload,
     idempotencyKey: params.idempotencyKey,
     error: params.error,
     createdAt: new Date().toISOString(),
@@ -91,7 +65,7 @@ export async function storeFailedEvent(
   await queue.send(message, { delaySeconds: RETRY_DELAYS_SECONDS[0] });
 
   console.log(
-    `[FailedEvents] Queued failed event ${params.eventId} (${params.eventName}) — first retry in ${RETRY_DELAYS_SECONDS[0]}s`,
+    `[FailedEvents] Queued failed event ${params.eventId} (${params.workflowName}) - first retry in ${RETRY_DELAYS_SECONDS[0]}s`,
   );
 }
 
@@ -107,22 +81,20 @@ export async function processFailedEventBatch(
   for (const message of batch.messages) {
     const record = message.body;
     const traceId = `${record.eventId}:retry:${message.attempts}`;
-    const backendPath = record.backendPath ?? record.eventName;
-    const backendEventId = record.backendEventId ?? record.eventId;
 
     try {
       // Call backend directly — same path the workflow step would use
       await callBackendService(
         env,
-        backendPath,
-        record.data,
+        record.backendPath,
+        record.payload,
         traceId,
-        backendEventId,
+        record.backendEventId,
       );
 
       message.ack();
       console.log(
-        `[FailedEvents] Retry #${message.attempts} succeeded for ${record.eventId} (${record.eventName})`,
+        `[FailedEvents] Retry #${message.attempts} succeeded for ${record.eventId} (${record.workflowName})`,
       );
     } catch (err) {
       // Non-retryable errors (4xx) will never succeed — ack to prevent
@@ -130,7 +102,7 @@ export async function processFailedEventBatch(
       if (isNonRetryableFailure(err)) {
         message.ack();
         console.error(
-          `[FailedEvents] Non-retryable error for ${record.eventId} (${record.eventName}) — dropping: ${err instanceof Error ? err.message : String(err)}`,
+          `[FailedEvents] Non-retryable error for ${record.eventId} (${record.workflowName}) - dropping: ${err instanceof Error ? err.message : String(err)}`,
         );
         continue;
       }
@@ -139,7 +111,7 @@ export async function processFailedEventBatch(
       const errorMsg = err instanceof Error ? err.message : String(err);
 
       console.warn(
-        `[FailedEvents] Retry #${message.attempts} failed for ${record.eventId} (${record.eventName}): ${errorMsg} — next retry in ${delay}s`,
+        `[FailedEvents] Retry #${message.attempts} failed for ${record.eventId} (${record.workflowName}): ${errorMsg} - next retry in ${delay}s`,
       );
 
       // message.attempts increments on each delivery. After max_retries

@@ -2,35 +2,32 @@
 
 Cloudflare Worker + Cloudflare Workflows runtime used by Manhali to execute background jobs reliably.
 
-This package is the workflow runtime for the monorepo. It receives typed events from `@abshahin/workflows-sdk`, starts the correct workflow class, calls the backend internal execution endpoints, and recovers permanently failed jobs through Cloudflare Queues.
+This package is the workflow runtime for the monorepo. It receives typed events from `@abshahin/workflows-sdk`, starts one generic SDK-registry workflow class, calls the backend internal execution endpoints, and recovers exhausted backend steps through Cloudflare Queues.
 
 Related SDK: `https://github.com/aashahin/workflows-sdk`
 
 ## What this service does
 
 - Accepts authenticated event batches at `POST /dispatch`
-- Routes events to workflow classes by event domain
+- Routes events through the shared `@manhali/workflows` registry
 - Supports delayed execution with `step.sleep(...)`
 - Retries transient backend failures inside the workflow runtime
 - Pushes exhausted workflow failures into a retry queue
 - Re-dispatches failed events from a queue consumer with progressive backoff
 - Exposes minimal health and operational endpoints
 
-## Event domains
+## Workflow Registry
 
-The worker currently handles four workflow domains:
+The worker currently runs the Manhali workflow registry from `@manhali/workflows`, which defines:
 
 - Email workflows
 - Notification workflows
 - Payment workflows
 - WhatsApp workflows
 
-Bindings are configured in `wrangler.jsonc`:
+One Cloudflare Workflow binding is configured in `wrangler.jsonc`:
 
-- `EMAIL_WORKFLOW`
-- `NOTIFICATION_WORKFLOW`
-- `PAYMENT_WORKFLOW`
-- `WHATSAPP_WORKFLOW`
+- `WORKFLOW`
 
 ## Architecture
 
@@ -40,14 +37,14 @@ The full system is split across three layers.
 
 - The backend creates workflow jobs through `@abshahin/workflows-sdk` (`https://github.com/aashahin/workflows-sdk`)
 - The SDK sends event batches over HTTP to this worker's `/dispatch` endpoint
-- Event contracts are shared and typed across producer and runtime
+- Event contracts and workflow definitions come from `@manhali/workflows`
 
 ### 2. Runtime layer: this worker
 
 - Validates incoming payloads
 - Authenticates requests with a bearer token
 - Applies lightweight per-isolate rate limiting
-- Resolves each event to a workflow binding
+- Resolves every registered event to the generic `WORKFLOW` binding
 - Starts a Cloudflare Workflow instance per event
 
 ### 3. Execution layer: backend callback
@@ -61,7 +58,7 @@ The full system is split across three layers.
 
 1. Backend code creates a job through the SDK.
 2. The SDK sends an authenticated `POST /dispatch` request.
-3. This worker validates the batch and starts the matching workflow.
+3. This worker validates the batch and starts the generic `ManhaliWorkflow`.
 4. The workflow optionally delays execution.
 5. The workflow calls the backend callback endpoint.
 6. Cloudflare Workflows retries transient step failures.
@@ -74,18 +71,10 @@ The full system is split across three layers.
 flowchart LR
   A[Backend producer] -->|SDK dispatch| B[Workflows SDK]
   B -->|POST /dispatch| C[Cloudflare Worker]
-  C --> D[EmailWorkflow]
-  C --> E[NotificationWorkflow]
-  C --> F[PaymentWorkflow]
-  C --> G[WhatsappWorkflow]
-  D -->|POST /workflows/execute/*| H[Backend execution endpoint]
-  E -->|POST /workflows/execute/*| H
-  F -->|POST /workflows/execute/*| H
-  G -->|POST /workflows/execute/*| H
-  D -. exhausted retries .-> I[Failed events queue]
-  E -. exhausted retries .-> I
-  F -. exhausted retries .-> I
-  G -. exhausted retries .-> I
+  C --> D[ManhaliWorkflow]
+  D -->|registry lookup| E[@manhali/workflows]
+  E -->|POST /workflows/execute/*| H[Backend execution endpoint]
+  E -. exhausted retries .-> I[Failed events queue]
   I --> J[Queue consumer]
   J -->|direct backend retry| H
   I -->|max retries exceeded| K[Dead-letter queue]
@@ -100,11 +89,6 @@ src/
   lib/
     backend.ts               Backend callback helpers
     failed-events.ts         Queue persistence + retry processing
-  workflows/
-    email.workflow.ts        Email workflow implementation
-    notification.workflow.ts Notification workflow implementation
-    payment.workflow.ts      Payment workflow implementation
-    whatsapp.workflow.ts     WhatsApp workflow implementation
 ```
 
 ## HTTP API
@@ -121,7 +105,7 @@ Behavior:
 
 - Rejects payloads larger than 1 MB
 - Requires a JSON body with an `events` array
-- Validates the basic event structure before workflow creation
+- Accepts SDK workflow envelopes only
 - Returns created workflow IDs plus per-item errors for rejected events
 
 Example request:
@@ -133,14 +117,11 @@ Example request:
       "id": "evt_01",
       "idempotencyKey": "email:reset-password:user-42",
       "traceId": "trace_01",
-      "delayMs": 0,
-      "event": {
-        "name": "email/reset-password",
-        "data": {
-          "tenantId": "tenant_123",
-          "email": "user@example.com",
-          "otpCode": "123456"
-        }
+      "name": "email/reset-password",
+      "payload": {
+        "tenantId": "tenant_123",
+        "email": "user@example.com",
+        "otpCode": "123456"
       }
     }
   ]
@@ -167,15 +148,12 @@ curl -X POST "$WORKER_URL/dispatch" \
         "id": "evt_demo_01",
         "idempotencyKey": "demo:email:reset-password:user-42",
         "traceId": "trace_demo_01",
-        "delayMs": 0,
-        "event": {
-          "name": "email/reset-password",
-          "data": {
-            "tenantId": "tenant_123",
-            "email": "user@example.com",
-            "userName": "John Doe",
-            "otpCode": "123456"
-          }
+        "name": "email/reset-password",
+        "payload": {
+          "tenantId": "tenant_123",
+          "email": "user@example.com",
+          "userName": "John Doe",
+          "otpCode": "123456"
         }
       }
     ]
@@ -486,9 +464,9 @@ This separation keeps event production, orchestration, and business execution de
 
 If you want to extend the worker, keep changes aligned with these conventions:
 
-- Add new event contracts in `@abshahin/workflows-sdk` first
-- Update worker routing in `src/index.ts`
-- Implement the workflow in `src/workflows/`
+- Add new event contracts and definitions in `@manhali/workflows` first
+- Keep this worker generic; avoid adding Manhali event switches here
+- Keep the `WORKFLOW` binding pointed at `ManhaliWorkflow`
 - Keep backend execution endpoints explicit and idempotent
 - Treat `404`, `409`, and `422` as permanently broken inputs unless the backend contract changes
 

@@ -18,27 +18,12 @@
   ],
 
   // Workflows
-  // Each workflow binding maps to a Workflow class exported from the worker.
+  // One generic SDK-registry Workflow class runs all registered Manhali workflows.
   "workflows": [
     {
-      "name": "manhali-email-workflow",
-      "binding": "EMAIL_WORKFLOW",
-      "class_name": "EmailWorkflow"
-    },
-    {
-      "name": "manhali-notification-workflow",
-      "binding": "NOTIFICATION_WORKFLOW",
-      "class_name": "NotificationWorkflow"
-    },
-    {
-      "name": "manhali-payment-workflow",
-      "binding": "PAYMENT_WORKFLOW",
-      "class_name": "PaymentWorkflow"
-    },
-    {
-      "name": "manhali-whatsapp-workflow",
-      "binding": "WHATSAPP_WORKFLOW",
-      "class_name": "WhatsappWorkflow"
+      "name": "manhali-workflow",
+      "binding": "WORKFLOW",
+      "class_name": "ManhaliWorkflow"
     }
   ],
 
