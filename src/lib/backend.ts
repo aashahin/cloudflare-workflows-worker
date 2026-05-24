@@ -47,11 +47,12 @@ export async function callBackendService(
     const body = await response.text().catch(() => "");
 
     // Only truly permanent client errors are non-retryable:
+    // - 400: malformed or incomplete workflow payload
     // - 404: resource doesn't exist
     // - 409: conflict (duplicate)
     // - 422: validation failure (bad input shape)
     // These will never succeed without code or data changes.
-    const NON_RETRYABLE_STATUSES = [404, 409, 422];
+    const NON_RETRYABLE_STATUSES = [400, 404, 409, 422];
 
     if (NON_RETRYABLE_STATUSES.includes(response.status)) {
       throw new NonRetryableError(
@@ -60,7 +61,6 @@ export async function callBackendService(
     }
 
     // Everything else is retryable:
-    // - 400: often config issues (invalid API keys, credentials)
     // - 401/403: auth/config issues that can be fixed between retries
     // - 429: rate limiting
     // - 5xx: transient server errors

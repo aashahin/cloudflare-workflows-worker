@@ -1,12 +1,13 @@
 // ─── Notification Workflow ────────────────────────────────────────────────────
 // Cloudflare Workflow that processes notification events.
 
-import { NOTIFICATION_EVENTS } from "@abshahin/workflows-sdk";
+import { NOTIFICATION_EVENTS } from "../contracts.ts";
 import {
   WorkflowEntrypoint,
   type WorkflowEvent,
   type WorkflowStep,
 } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../env.js";
 import {
   callBackendService,
@@ -79,7 +80,7 @@ export class NotificationWorkflow extends WorkflowEntrypoint<
 
         default:
           console.error(`[NotificationWorkflow] Unknown event: ${eventName}`);
-          throw new Error(`Unknown notification event: ${eventName}`);
+          throw new NonRetryableError(`Unknown notification event: ${eventName}`);
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -101,6 +102,7 @@ export class NotificationWorkflow extends WorkflowEntrypoint<
               eventId,
               workflowType: "notification",
               eventName,
+              backendPath: eventName,
               data,
               idempotencyKey: event.payload.idempotencyKey,
               error: errorMsg,
@@ -108,6 +110,8 @@ export class NotificationWorkflow extends WorkflowEntrypoint<
           },
         );
       }
+
+      throw err;
     }
 
     return { status: "completed", eventId, eventName };

@@ -2,12 +2,13 @@
 // Cloudflare Workflow that orchestrates payout processing.
 // Steps: validate → process → notify owner.
 
-import { PAYMENT_EVENTS } from "@abshahin/workflows-sdk";
+import { PAYMENT_EVENTS } from "../contracts.ts";
 import {
   WorkflowEntrypoint,
   type WorkflowEvent,
   type WorkflowStep,
 } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../env.js";
 import {
   callBackendService,
@@ -53,9 +54,15 @@ export class PaymentWorkflow extends WorkflowEntrypoint<
       `[PaymentWorkflow] Running — event=${eventName}, id=${eventId}, trace=${traceId}`,
     );
 
+    let failedBackendPath = eventName;
+    let failedBackendEventId = eventId;
+
     // Bound helper for backend calls with trace + idempotency propagation
-    const callBackend = (path: string) =>
-      callBackendService(this.env, path, data, traceId, eventId);
+    const callBackend = (path: string, stepKey: string) => {
+      failedBackendPath = path;
+      failedBackendEventId = `${eventId}:${stepKey}`;
+      return callBackendService(this.env, path, data, traceId, failedBackendEventId);
+    };
 
     // Optional delay before processing
     if (delayMs > 0) {
@@ -67,23 +74,23 @@ export class PaymentWorkflow extends WorkflowEntrypoint<
         case PAYMENT_EVENTS.PROCESS_PAYOUT:
           // Step 1: Validate payout profile + transaction
           await step.do("validate-payout", RETRY_CONFIG, () =>
-            callBackend("payment/validate-payout"),
+            callBackend("payment/validate-payout", "validate-payout"),
           );
 
           // Step 2: Process the payout (mark processing, future: call gateway)
           await step.do("process-payout", RETRY_CONFIG, () =>
-            callBackend("payment/process-payout"),
+            callBackend("payment/process-payout", "process-payout"),
           );
 
           // Step 3: Notify tenant owner of withdrawal status
           await step.do("notify-payout-status", RETRY_CONFIG, () =>
-            callBackend("payment/notify-payout-status"),
+            callBackend("payment/notify-payout-status", "notify-payout-status"),
           );
           break;
 
         default:
           console.error(`[PaymentWorkflow] Unknown event: ${eventName}`);
-          throw new Error(`Unknown payment event: ${eventName}`);
+          throw new NonRetryableError(`Unknown payment event: ${eventName}`);
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -103,6 +110,8 @@ export class PaymentWorkflow extends WorkflowEntrypoint<
               eventId,
               workflowType: "payment",
               eventName,
+              backendPath: failedBackendPath,
+              backendEventId: failedBackendEventId,
               data,
               idempotencyKey: event.payload.idempotencyKey,
               error: errorMsg,
@@ -110,6 +119,8 @@ export class PaymentWorkflow extends WorkflowEntrypoint<
           },
         );
       }
+
+      throw err;
     }
 
     return { status: "completed", eventId, eventName };

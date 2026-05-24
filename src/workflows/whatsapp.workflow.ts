@@ -1,12 +1,13 @@
 // ─── WhatsApp Workflow ──────────────────────────────────────────────────────
 // Cloudflare Workflow that processes WhatsApp template events.
 
-import { WHATSAPP_EVENTS } from "@abshahin/workflows-sdk";
+import { WHATSAPP_EVENTS } from "../contracts.ts";
 import {
   WorkflowEntrypoint,
   type WorkflowEvent,
   type WorkflowStep,
 } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../env.ts";
 import {
   callBackendService,
@@ -66,7 +67,7 @@ export class WhatsappWorkflow extends WorkflowEntrypoint<
 
         default:
           console.error(`[WhatsappWorkflow] Unknown event: ${eventName}`);
-          throw new Error(`Unknown WhatsApp event: ${eventName}`);
+          throw new NonRetryableError(`Unknown WhatsApp event: ${eventName}`);
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -86,6 +87,7 @@ export class WhatsappWorkflow extends WorkflowEntrypoint<
               eventId,
               workflowType: "whatsapp",
               eventName,
+              backendPath: eventName,
               data,
               idempotencyKey: event.payload.idempotencyKey,
               error: errorMsg,
@@ -93,6 +95,8 @@ export class WhatsappWorkflow extends WorkflowEntrypoint<
           },
         );
       }
+
+      throw err;
     }
 
     return { status: "completed", eventId, eventName };

@@ -22,6 +22,10 @@ export interface FailedEventMessage {
   workflowType: "email" | "notification" | "payment" | "whatsapp";
   /** Event name (e.g. "email/invitation") */
   eventName: string;
+  /** Backend execution path to retry. Defaults to eventName for older messages. */
+  backendPath?: string;
+  /** Backend idempotency event ID to retry. Defaults to eventId for older messages. */
+  backendEventId?: string;
   /** Original payload data */
   data: Record<string, unknown>;
   /** Idempotency key */
@@ -36,13 +40,15 @@ export interface FailedEventMessage {
 
 const RETRY_DELAYS_SECONDS = [
   60, //  1 min
+  180, //  3 min
   300, //  5 min
+  600, // 10 min
   900, // 15 min
+  1200, // 20 min
   1800, // 30 min
   2700, // 45 min
   3600, // 60 min
   5400, // 90 min
-  7200, // 120 min
 ];
 
 /** Get the retry delay in seconds for the given attempt number (1-based). */
@@ -62,6 +68,8 @@ export async function storeFailedEvent(
     eventId: string;
     workflowType: "email" | "notification" | "payment" | "whatsapp";
     eventName: string;
+    backendPath?: string;
+    backendEventId?: string;
     data: Record<string, unknown>;
     idempotencyKey: string;
     error: string;
@@ -71,6 +79,8 @@ export async function storeFailedEvent(
     eventId: params.eventId,
     workflowType: params.workflowType,
     eventName: params.eventName,
+    backendPath: params.backendPath,
+    backendEventId: params.backendEventId,
     data: params.data,
     idempotencyKey: params.idempotencyKey,
     error: params.error,
@@ -96,16 +106,18 @@ export async function processFailedEventBatch(
 ): Promise<void> {
   for (const message of batch.messages) {
     const record = message.body;
-    const retryEventId = crypto.randomUUID().replace(/-/g, "");
+    const traceId = `${record.eventId}:retry:${message.attempts}`;
+    const backendPath = record.backendPath ?? record.eventName;
+    const backendEventId = record.backendEventId ?? record.eventId;
 
     try {
       // Call backend directly — same path the workflow step would use
       await callBackendService(
         env,
-        record.eventName,
+        backendPath,
         record.data,
-        retryEventId, // traceId
-        retryEventId, // eventId for idempotency
+        traceId,
+        backendEventId,
       );
 
       message.ack();

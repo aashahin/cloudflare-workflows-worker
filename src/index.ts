@@ -7,7 +7,7 @@ import {
   NOTIFICATION_EVENTS,
   PAYMENT_EVENTS,
   WHATSAPP_EVENTS,
-} from "@abshahin/workflows-sdk";
+} from "./contracts.js";
 import type { Env } from "./env.js";
 import {
   type FailedEventMessage,
@@ -61,21 +61,42 @@ function checkRateLimit(): boolean {
   return ++rateLimit.count <= rateLimit.max;
 }
 
-// ─── Dispatch payload shape (matches SDK HttpTransport) ──────────────────────
+// ─── Dispatch payload shape (accepts v1 SDK envelopes and old transport items) ──────────────────────
 
 interface DispatchEvent {
   id: string;
   idempotencyKey: string;
   traceId?: string;
-  event: {
+  name?: string;
+  payload?: Record<string, unknown>;
+  event?: {
     name: string;
     data: Record<string, unknown>;
   };
-  delayMs: number;
+  delayMs?: number;
+  scheduledAt?: string;
 }
 
 interface DispatchPayload {
   events: DispatchEvent[];
+}
+
+interface PreparedDispatchEvent {
+  id: string;
+  eventName: string;
+  traceId: string;
+  idempotencyKey: string;
+  scheduledAt?: string;
+  delayMs: number;
+  workflow: Workflow;
+  params: {
+    eventId: string;
+    idempotencyKey: string;
+    traceId: string;
+    eventName: string;
+    data: Record<string, unknown>;
+    delayMs: number;
+  };
 }
 
 // ─── Worker fetch handler ────────────────────────────────────────────────────
@@ -101,6 +122,21 @@ export default {
           deadLetter: "manhali-failed-events-dlq",
         },
       });
+    }
+
+    if (url.pathname.startsWith("/status/") && request.method === "GET") {
+      if (!verifyAuth(request.headers.get("Authorization"), env.AUTH_TOKEN)) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      const id = url.pathname.slice("/status/".length);
+      const name = url.searchParams.get("name") ?? undefined;
+      const status = await getWorkflowStatus(id, name, env);
+      if (!status) {
+        return Response.json({ error: "Workflow instance not found" }, { status: 404 });
+      }
+
+      return Response.json(status);
     }
 
     // Dispatch endpoint
@@ -153,66 +189,188 @@ async function handleDispatch(request: Request, env: Env): Promise<Response> {
     return Response.json({ error: "Missing events array" }, { status: 400 });
   }
 
-  const ids: string[] = [];
   const errors: Array<{ id: string; error: string }> = [];
+  const preparedEvents: PreparedDispatchEvent[] = [];
 
   for (const item of body.events) {
-    try {
-      // Validate item structure
-      if (
-        !item.id ||
-        !item.event?.name ||
-        typeof item.event?.data !== "object"
-      ) {
-        errors.push({
-          id: item.id ?? "unknown",
-          error:
-            "Invalid event structure: missing id, event.name, or event.data",
-        });
-        continue;
-      }
+    // Validate item structure
+    const eventName = item.name ?? item.event?.name;
+    const eventData = item.payload ?? item.event?.data;
 
-      const workflow = resolveWorkflow(item.event.name, env);
-
-      if (!workflow) {
-        errors.push({
-          id: item.id,
-          error: `Unknown event: ${item.event.name}`,
-        });
-        continue;
-      }
-
-      const traceId = item.traceId ?? item.id;
-
-      // Use random event ID as instance ID. Cloudflare permanently stores
-      // instance IDs — even after completion — so deterministic idempotency
-      // keys would reject legitimate re-sends of identical payloads.
-      await workflow.create({
-        id: item.id,
-        params: {
-          eventId: item.id,
-          idempotencyKey: item.idempotencyKey,
-          traceId,
-          eventName: item.event.name,
-          data: item.event.data,
-          delayMs: item.delayMs,
-        },
+    if (
+      !item.id ||
+      !item.idempotencyKey ||
+      !eventName ||
+      typeof eventData !== "object" ||
+      eventData === null ||
+      Array.isArray(eventData)
+    ) {
+      errors.push({
+        id: item.id ?? "unknown",
+        error:
+          "Invalid event structure: missing id, idempotencyKey, name, or payload",
       });
+      continue;
+    }
 
-      ids.push(item.id);
+    const workflow = resolveWorkflow(eventName, env);
+
+    if (!workflow) {
+      errors.push({
+        id: item.id,
+        error: `Unknown event: ${eventName}`,
+      });
+      continue;
+    }
+
+    const traceId = item.traceId ?? item.id;
+    const delayMs =
+      item.delayMs ??
+      (item.scheduledAt
+        ? Math.max(0, new Date(item.scheduledAt).getTime() - Date.now())
+        : 0);
+
+    preparedEvents.push({
+      id: item.id,
+      eventName,
+      traceId,
+      idempotencyKey: item.idempotencyKey,
+      scheduledAt: item.scheduledAt,
+      delayMs,
+      workflow,
+      params: {
+        eventId: item.id,
+        idempotencyKey: item.idempotencyKey,
+        traceId,
+        eventName,
+        data: eventData,
+        delayMs,
+      },
+    });
+  }
+
+  const instances = await createWorkflowInstances(preparedEvents, errors);
+
+  return Response.json({
+    ids: instances.map((instance) => instance.id),
+    instances,
+    errors: errors.length > 0 ? errors : undefined,
+  });
+}
+
+async function createWorkflowInstances(
+  events: PreparedDispatchEvent[],
+  errors: Array<{ id: string; error: string }>,
+): Promise<Array<{
+  id: string;
+  name: string;
+  status: "queued" | "scheduled";
+  traceId: string;
+  idempotencyKey: string;
+  scheduledAt?: string;
+  updatedAt: string;
+}>> {
+  const instances: Array<{
+    id: string;
+    name: string;
+    status: "queued" | "scheduled";
+    traceId: string;
+    idempotencyKey: string;
+    scheduledAt?: string;
+    updatedAt: string;
+  }> = [];
+  const groups = new Map<Workflow, PreparedDispatchEvent[]>();
+
+  for (const event of events) {
+    const group = groups.get(event.workflow);
+    if (group) {
+      group.push(event);
+    } else {
+      groups.set(event.workflow, [event]);
+    }
+  }
+
+  for (const group of groups.values()) {
+    for (const chunk of chunkEvents(group, 100)) {
+      const accepted = await createWorkflowChunk(chunk, errors);
+      instances.push(...accepted.map(toDispatchInstance));
+    }
+  }
+
+  return instances;
+}
+
+async function createWorkflowChunk(
+  events: PreparedDispatchEvent[],
+  errors: Array<{ id: string; error: string }>,
+): Promise<PreparedDispatchEvent[]> {
+  if (events.length === 0) return [];
+
+  const workflow = events[0]!.workflow;
+  if (workflow.createBatch) {
+    try {
+      await workflow.createBatch(
+        events.map((event) => ({
+          id: event.id,
+          params: event.params,
+        })),
+      );
+
+      for (const event of events) {
+        console.log(
+          `[Dispatch] Accepted workflow for ${event.eventName} (id: ${event.id}, trace: ${event.traceId})`,
+        );
+      }
+
+      return events;
+    } catch (error) {
+      console.warn(
+        `[Dispatch] Batch create failed; retrying individually: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  const accepted: PreparedDispatchEvent[] = [];
+  for (const event of events) {
+    try {
+      await event.workflow.create({
+        id: event.id,
+        params: event.params,
+      });
+      accepted.push(event);
 
       console.log(
-        `[Dispatch] Created workflow for ${item.event.name} (id: ${item.id}, trace: ${traceId})`,
+        `[Dispatch] Created workflow for ${event.eventName} (id: ${event.id}, trace: ${event.traceId})`,
       );
     } catch (error) {
       errors.push({
-        id: item.id,
+        id: event.id,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
-  return Response.json({ ids, errors: errors.length > 0 ? errors : undefined });
+  return accepted;
+}
+
+function toDispatchInstance(event: PreparedDispatchEvent) {
+  return {
+    id: event.id,
+    name: event.eventName,
+    status: event.delayMs > 0 ? ("scheduled" as const) : ("queued" as const),
+    traceId: event.traceId,
+    idempotencyKey: event.idempotencyKey,
+    scheduledAt: event.scheduledAt,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function chunkEvents<T>(events: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < events.length; index += size) {
+    chunks.push(events.slice(index, index + size));
+  }
+  return chunks;
 }
 
 // ─── Routing ─────────────────────────────────────────────────────────────────
@@ -229,5 +387,46 @@ function resolveWorkflow(eventName: string, env: Env): Workflow | null {
   if (NOTIFICATION_EVENT_NAMES.has(eventName)) return env.NOTIFICATION_WORKFLOW;
   if (PAYMENT_EVENT_NAMES.has(eventName)) return env.PAYMENT_WORKFLOW;
   if (WHATSAPP_EVENT_NAMES.has(eventName)) return env.WHATSAPP_WORKFLOW;
+  return null;
+}
+
+async function getWorkflowStatus(
+  id: string,
+  eventName: string | undefined,
+  env: Env,
+): Promise<Record<string, unknown> | null> {
+  const resolved = eventName ? resolveWorkflow(eventName, env) : null;
+  const candidates: Array<{ name: string; workflow: Workflow }> = resolved
+    ? [{ name: eventName!, workflow: resolved }]
+    : [
+        { name: "email", workflow: env.EMAIL_WORKFLOW },
+        { name: "notification", workflow: env.NOTIFICATION_WORKFLOW },
+        { name: "payment", workflow: env.PAYMENT_WORKFLOW },
+        { name: "whatsapp", workflow: env.WHATSAPP_WORKFLOW },
+      ];
+
+  for (const candidate of candidates) {
+    try {
+      const instance = await candidate.workflow.get(id);
+      const details = await instance.status();
+      const normalized =
+        typeof details === "object" && details !== null
+          ? (details as Record<string, unknown>)
+          : { status: details };
+      const status = normalized.status;
+      if (!eventName && status === "unknown") continue;
+      return {
+        id,
+        name: candidate.name,
+        ...normalized,
+      };
+    } catch (error) {
+      if (/not\s*found|does\s*not\s*exist|unknown\s*instance/i.test(String(error))) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
   return null;
 }

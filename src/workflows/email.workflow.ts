@@ -2,12 +2,13 @@
 // Cloudflare Workflow that processes email events.
 // Each event type maps to a step that calls the backend email service.
 
-import { EMAIL_EVENTS } from "@abshahin/workflows-sdk";
+import { EMAIL_EVENTS } from "../contracts.ts";
 import {
   WorkflowEntrypoint,
   type WorkflowEvent,
   type WorkflowStep,
 } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../env.ts";
 import {
   callBackendService,
@@ -143,7 +144,7 @@ export class EmailWorkflow extends WorkflowEntrypoint<
 
         default:
           console.error(`[EmailWorkflow] Unknown event: ${eventName}`);
-          throw new Error(`Unknown email event: ${eventName}`);
+          throw new NonRetryableError(`Unknown email event: ${eventName}`);
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -165,6 +166,7 @@ export class EmailWorkflow extends WorkflowEntrypoint<
               eventId,
               workflowType: "email",
               eventName,
+              backendPath: eventName,
               data,
               idempotencyKey: event.payload.idempotencyKey,
               error: errorMsg,
@@ -172,6 +174,8 @@ export class EmailWorkflow extends WorkflowEntrypoint<
           },
         );
       }
+
+      throw err;
     }
 
     return { status: "completed", eventId, eventName };
