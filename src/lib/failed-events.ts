@@ -7,7 +7,7 @@
 // message.attempts increments naturally on each failure and message.retry()
 // applies the correct progressive delay from the schedule.
 //
-// Retry schedule (10 attempts max, controlled by wrangler.jsonc max_retries):
+// Retry schedule (initial delivery + 9 explicit retries; max_retries is 10):
 //   1m, 3m, 5m, 10m, 15m, 20m, 30m, 45m, 60m, 90m
 
 import type { ManhaliFailedWorkflowEvent } from "@manhali/workflows";
@@ -41,7 +41,7 @@ export type FailedEventQueueMessage =
   | FailedEventMessage
   | LegacyFailedEventMessage;
 
-// ─── Retry schedule (seconds) — indexed by message.attempts ──────────────────
+// ─── Retry schedule (seconds) — first entry is used on queue.send ────────────
 
 const RETRY_DELAYS_SECONDS = [
   60, //  1 min
@@ -59,7 +59,7 @@ const RETRY_DELAYS_SECONDS = [
 /** Get the retry delay in seconds for the given attempt number (1-based). */
 function getRetryDelay(attempt: number): number {
   const idx = Math.min(
-    Math.max(attempt - 1, 0),
+    Math.max(attempt, 0),
     RETRY_DELAYS_SECONDS.length - 1,
   );
   return RETRY_DELAYS_SECONDS[idx] ?? 60;

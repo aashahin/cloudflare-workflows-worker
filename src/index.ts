@@ -5,6 +5,7 @@
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import {
   createCloudflareDispatchHandler,
+  createCloudflareWorkflowDispatch,
   createCloudflareWorkflowEntrypoint,
 } from "@abshahin/workflows-sdk/cloudflare";
 import {
@@ -68,6 +69,12 @@ const ManhaliWorkflowBase: WorkflowBaseClass =
     {
       registry: manhaliWorkflowRegistry,
       services: createManhaliWorkflowServices,
+      dispatch: createCloudflareWorkflowDispatch<Env>({
+        registry: manhaliWorkflowRegistry,
+        resolveWorkflow(eventName, env) {
+          return manhaliWorkflowRegistry.has(eventName) ? env.WORKFLOW : null;
+        },
+      }),
     },
   );
 
@@ -116,5 +123,12 @@ export default {
     env: Env,
   ): Promise<void> {
     await processFailedEventBatch(batch, env);
+  },
+
+  async scheduled(
+    controller: ScheduledController,
+    env: Env,
+  ): Promise<void> {
+    await dispatchHandler.scheduled(controller, env);
   },
 };
