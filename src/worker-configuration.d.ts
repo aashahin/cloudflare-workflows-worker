@@ -6,7 +6,7 @@ interface __BaseEnv_Env {
 	ENVIRONMENT: string;
 	AUTH_TOKEN: string;
 	BACKEND_URL: string;
-	WORKFLOW: Workflow<Parameters<import("./index").ManhaliWorkflow['run']>[0]['payload']>;
+	WORKFLOW: Workflow<Parameters<import("./index").BackendCallbackWorkflow['run']>[0]['payload']>;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {

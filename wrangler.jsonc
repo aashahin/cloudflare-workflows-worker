@@ -18,12 +18,12 @@
   ],
 
   // Workflows
-  // One generic SDK-registry Workflow class runs all registered Manhali workflows.
+  // One generic SDK callback Workflow class runs signed backend workflow names.
   "workflows": [
     {
       "name": "manhali-workflow",
       "binding": "WORKFLOW",
-      "class_name": "ManhaliWorkflow"
+      "class_name": "BackendCallbackWorkflow"
     }
   ],
 

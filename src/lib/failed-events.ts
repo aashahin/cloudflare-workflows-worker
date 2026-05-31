@@ -10,13 +10,13 @@
 // Retry schedule (initial delivery + 9 explicit retries; max_retries is 10):
 //   1m, 3m, 5m, 10m, 15m, 20m, 30m, 45m, 60m, 90m
 
-import type { ManhaliFailedWorkflowEvent } from "@manhali/workflows";
+import type { BackendCallbackFailedEvent } from "@abshahin/workflows-sdk";
 import type { Env } from "../env.js";
 import { callBackendService, isNonRetryableFailure } from "./backend.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface FailedEventMessage extends ManhaliFailedWorkflowEvent {
+export interface FailedEventMessage extends BackendCallbackFailedEvent {
   createdAt: string;
 }
 
@@ -69,7 +69,7 @@ function getRetryDelay(attempt: number): number {
 
 export async function storeFailedEvent(
   queue: Queue,
-  params: ManhaliFailedWorkflowEvent,
+  params: BackendCallbackFailedEvent,
 ): Promise<void> {
   const message: FailedEventMessage = {
     eventId: params.eventId,

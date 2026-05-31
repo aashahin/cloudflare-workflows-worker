@@ -12,20 +12,19 @@ Related SDK: `https://github.com/aashahin/workflows-sdk`
 - `GET /status/:id?name=<workflowName>` for Workflow instance status
 - `GET /health` for liveness checks
 - Optional per-isolate rate limiting and request-size checks through the SDK dispatcher
-- One generic Cloudflare Workflow class backed by an SDK workflow registry
+- One generic Cloudflare Workflow class backed by the SDK callback registry
 - Queue-based recovery for callback steps that keep failing after Workflow retries
 
 ## Expected Project Wiring
 
 To use this worker in your own project, provide:
 
-- an SDK workflow registry package
 - one Cloudflare Workflow binding in `wrangler.jsonc`
 - a callback service reachable through `BACKEND_URL`
 - a shared bearer token in `AUTH_TOKEN`
 - a Cloudflare Queue and DLQ for failed callback retries
 
-The default source in this repository is an example integration. Before publishing or reusing it as a template, replace project-specific registry imports, workflow class names, routes, queue names, and package dependencies with names for your own project.
+The default source is project-agnostic. Before publishing or reusing it as a template, replace route, Workflow, Queue, and DLQ names in `wrangler.jsonc` with names for your own project.
 
 ## Architecture
 
@@ -34,7 +33,7 @@ flowchart LR
   A[Producer service] -->|SDK dispatch| B[Workflows SDK]
   B -->|POST /dispatch| C[Cloudflare Worker]
   C --> D[Generic Workflow class]
-  D -->|registry lookup| E[Project workflow registry]
+  D -->|callback step plan| E[SDK callback registry]
   E -->|POST /workflows/execute/*| F[Callback service]
   E -. exhausted retries .-> G[Failed events queue]
   G --> H[Queue consumer]
@@ -108,7 +107,7 @@ Example response:
 
 ### `GET /status/:id`
 
-Returns normalized Workflow status. Include `name=<workflowName>` when you know the workflow name; otherwise the dispatcher searches the configured registry bindings.
+Returns normalized Workflow status. Include `name=<workflowName>` because the callback registry accepts dynamic signed workflow names.
 
 ```bash
 curl "$WORKER_URL/status/evt_01?name=email/reset-password" \
@@ -136,14 +135,31 @@ curl "$WORKER_URL/failed-events" \
 
 ## Workflow Behavior
 
-Project workflow definitions run through `createCloudflareWorkflowEntrypoint()` from `@abshahin/workflows-sdk/cloudflare`.
+Backend callback workflows run through `createCloudflareWorkflowEntrypoint()` from `@abshahin/workflows-sdk/cloudflare` and `createBackendCallbackWorkflowRegistry()` from `@abshahin/workflows-sdk`.
 
 The runner maps:
 
 - `ctx.step()` to Cloudflare `step.do()`
 - `ctx.sleep()` to Cloudflare `step.sleep()` or `step.sleepUntil()`
 - workflow retry/timeout defaults to Cloudflare step config
-- `ctx.services` to project runtime services created from Worker env bindings
+- `ctx.services` to backend callback services created from Worker env bindings
+
+By default, the backend path equals the workflow name. Producers can provide
+`metadata.callbackSteps` to run multiple callback steps in order:
+
+```json
+{
+  "metadata": {
+    "callbackSteps": [
+      {
+        "stepName": "validate-payout",
+        "backendPath": "payment/validate-payout",
+        "backendEventIdSuffix": "validate-payout"
+      }
+    ]
+  }
+}
+```
 
 Delayed envelopes use `scheduledAt` or `delayMs`; the Workflow sleeps before executing user code.
 
@@ -248,8 +264,6 @@ Producer service env:
 
 When adapting this worker:
 
-- Replace the example project registry import with your own registry package.
-- Replace the example Workflow class name and `wrangler.jsonc` `class_name` if desired.
 - Replace route, Workflow, Queue, and DLQ names in `wrangler.jsonc`.
 - Keep workflow step names stable once deployed because Cloudflare uses them for durable step state.
 - Keep callback execution idempotent by using `X-Workflow-Event-Id`.
