@@ -1,10 +1,20 @@
 {
-  "extends": "../../../tsconfig.json",
   "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
     "rootDir": "./src",
     "outDir": "./dist",
-    "composite": true,
     "noEmit": true,
+    "types": [],
+    "lib": ["ESNext"],
     "paths": {
       "@/*": ["./src/*"]
     }

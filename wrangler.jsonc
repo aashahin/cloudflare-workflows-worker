@@ -27,6 +27,16 @@
     }
   ],
 
+  // Cron triggers
+  // The exported scheduled() handler dispatches any registered workflow with a
+  // due cron run. Cloudflare only invokes scheduled() when a triggers.crons
+  // entry exists, so workflow-level cron schedules never fire without one.
+  // Enable this (cadence matching or finer than the finest workflow cron) once
+  // your registry defines workflows with a `cron` field.
+  // "triggers": {
+  //   "crons": ["*/1 * * * *"]
+  // },
+
   // Queues (failed event retry)
   // Failed workflow events are sent to a Queue for automatic retry with
   // progressive delays. After max_retries, messages go to a dead-letter queue

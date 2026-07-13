@@ -7,8 +7,12 @@
 // message.attempts increments naturally on each failure and message.retry()
 // applies the correct progressive delay from the schedule.
 //
-// Retry schedule (initial delivery + 9 explicit retries; max_retries is 10):
-//   1m, 3m, 5m, 10m, 15m, 20m, 30m, 45m, 60m, 90m
+// Retry schedule — wrangler.jsonc sets max_retries: 10, so a message can be
+// delivered up to 11 times (initial delivery + 10 retries). The 10 explicit
+// delays below cover the initial send (index 0) and retries 1–9; the 10th (and
+// final) retry falls past the end of the array and getRetryDelay clamps it to
+// the last entry, reusing the 90m delay before Cloudflare routes to the DLQ:
+//   1m, 3m, 5m, 10m, 15m, 20m, 30m, 45m, 60m, 90m (+ 90m reused on retry 10)
 
 import type { ManhaliFailedWorkflowEvent } from "@manhali/workflows";
 import type { Env } from "../env.js";
@@ -56,7 +60,12 @@ const RETRY_DELAYS_SECONDS = [
   5400, // 90 min
 ];
 
-/** Get the retry delay in seconds for the given attempt number (1-based). */
+/**
+ * Get the retry delay in seconds for the given attempt number (1-based).
+ * Attempts beyond the schedule length (e.g. the final retry permitted by
+ * max_retries: 10) are intentionally clamped to the last entry, so they reuse
+ * the 90m delay rather than throwing or resetting.
+ */
 function getRetryDelay(attempt: number): number {
   const idx = Math.min(
     Math.max(attempt, 0),

@@ -27,6 +27,15 @@ To use this worker in your own project, provide:
 
 The default source in this repository is an example integration. Before publishing or reusing it as a template, replace project-specific registry imports, workflow class names, routes, queue names, and package dependencies with names for your own project.
 
+### Dependencies and installation
+
+This template depends on two packages:
+
+- `@abshahin/workflows-sdk` — the published runtime SDK, pinned to a semver range (`^0.1.4`). Installs from npm out of the box.
+- `@manhali/workflows` — a **placeholder for the project-specific workflow-definitions package** you must supply. It is the example registry (`manhaliWorkflowRegistry`, `ManhaliWorkflowServices`, `ManhaliFailedWorkflowEvent`) this template imports, and it is kept as a `workspace:*` dependency to make that stand-in explicit.
+
+Because `@manhali/workflows` is not a real published package, **`bun install` fails until you replace it** with your own workflow-definitions package (adjust the imports in `src/index.ts` and `src/lib/failed-events.ts`, and the dependency entry in `package.json`). Either point it at your published package and version range, or wire it up as a workspace member of your own monorepo.
+
 ## Architecture
 
 ```mermaid
