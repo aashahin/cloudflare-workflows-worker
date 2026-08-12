@@ -68,5 +68,44 @@
   // Dev settings
   "dev": {
     "port": 8787
+  },
+
+  "env": {
+    "sandbox": {
+      "name": "manhali-workflows-worker-sandbox",
+      "account_id": "a793ff57a25dfe6874a8738f9addd295",
+      "workers_dev": true,
+      "preview_urls": true,
+      // No manhali.com custom domain on the sandbox account.
+      "routes": [],
+      "workflows": [
+        {
+          "name": "manhali-workflow-sandbox",
+          "binding": "WORKFLOW",
+          "class_name": "BackendCallbackWorkflow"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "FAILED_EVENTS_QUEUE",
+            "queue": "manhali-failed-events-sandbox"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "manhali-failed-events-sandbox",
+            "max_retries": 10,
+            "dead_letter_queue": "manhali-failed-events-sandbox-dlq",
+            "max_batch_size": 10,
+            "max_batch_timeout": 30
+          }
+        ]
+      },
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 1
+      }
+    }
   }
 }
