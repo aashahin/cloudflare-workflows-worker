@@ -3,9 +3,11 @@
 
   "name": "manhali-workflows-worker",
   "main": "src/index.ts",
+  "account_id": "53fb41ede04e54b276ce3fd9bfd270b6",
+  "workers_dev": false,
+  "preview_urls": false,
   "compatibility_date": "2026-03-01",
   "compatibility_flags": ["nodejs_compat"],
-
   // Define custom domains and routes for the worker. This is required for
   // receiving workflow events via HTTP triggers. The pattern should match the
   // domain configured in the workflow's HTTP trigger.

@@ -19,8 +19,11 @@
     "background-jobs"
   ],
   "scripts": {
+    "build:cf:production": "wrangler deploy --dry-run --config wrangler.jsonc --env=\"\"",
+    "build:cf:sandbox": "wrangler deploy --dry-run --config wrangler.jsonc --env sandbox",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy:production": "wrangler deploy --config wrangler.jsonc --env=\"\"",
+    "deploy:sandbox": "wrangler deploy --config wrangler.jsonc --env sandbox",
     "tail": "wrangler tail"
   },
   "dependencies": {
