@@ -19,10 +19,10 @@
     "background-jobs"
   ],
   "scripts": {
-    "build:cf:production": "wrangler deploy --dry-run --config wrangler.jsonc --env=\"\"",
+    "build:cf:production": "wrangler deploy --dry-run --config wrangler.jsonc --env=\"\" --outdir .wrangler-build/production",
     "build:cf:sandbox": "wrangler deploy --dry-run --config wrangler.jsonc --env sandbox",
     "dev": "wrangler dev",
-    "deploy:production": "wrangler deploy --config wrangler.jsonc --env=\"\"",
+    "deploy:production": "bun ../../../scripts/release/cloudflare/production-entrypoint.ts --worker manhali-workflows-worker",
     "deploy:sandbox": "wrangler deploy --config wrangler.jsonc --env sandbox",
     "tail": "wrangler tail"
   },

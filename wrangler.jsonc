@@ -8,6 +8,10 @@
   "preview_urls": false,
   "compatibility_date": "2026-03-01",
   "compatibility_flags": ["nodejs_compat"],
+  "rules": [
+    { "type": "ESModule", "globs": ["**/*.js"], "fallthrough": true },
+    { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }
+  ],
   // Define custom domains and routes for the worker. This is required for
   // receiving workflow events via HTTP triggers. The pattern should match the
   // domain configured in the workflow's HTTP trigger.
