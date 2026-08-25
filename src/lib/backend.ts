@@ -3,6 +3,7 @@
 
 import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../env.js";
+import { fetchBackendExecute } from "./backend-transport.js";
 
 export function isNonRetryableFailure(err: unknown): boolean {
   if (err instanceof NonRetryableError) return true;
@@ -30,7 +31,7 @@ export async function callBackendService(
       ? data.tenantId.trim()
       : undefined;
 
-  const response = await fetch(`${env.BACKEND_URL}/workflows/execute/${path}`, {
+  const response = await fetchBackendExecute(env, path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -68,4 +69,6 @@ export async function callBackendService(
     // - 5xx: transient server errors
     throw new Error(`Backend ${path} failed (${response.status}): ${body}`);
   }
+
+  await response.body?.cancel();
 }

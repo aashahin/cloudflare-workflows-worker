@@ -20,21 +20,32 @@ import {
 } from "./lib/failed-events.js";
 import { callBackendService } from "./lib/backend.js";
 
-function timingSafeEqual(a: string, b: string): boolean {
-  const encoder = new TextEncoder();
-  const left = encoder.encode(a);
-  const right = encoder.encode(b);
-  if (left.byteLength !== right.byteLength) return false;
-
-  let result = 0;
-  for (let index = 0; index < left.byteLength; index++) {
-    result |= left[index]! ^ right[index]!;
-  }
-
-  return result === 0;
+async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
 }
 
-function verifyAuth(header: string | null, expectedToken: string): boolean {
+/** Hash then compare so token length is not leaked (analytics auth pattern). */
+async function timingSafeEqual(a: string, b: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [left, right] = await Promise.all([
+    sha256(encoder.encode(a)),
+    sha256(encoder.encode(b)),
+  ]);
+  const subtle = crypto.subtle as SubtleCrypto & {
+    timingSafeEqual?: (x: ArrayBufferView, y: ArrayBufferView) => boolean;
+  };
+  if (typeof subtle.timingSafeEqual === "function") {
+    return subtle.timingSafeEqual(left, right);
+  }
+  let diff = 0;
+  for (let i = 0; i < left.length; i++) diff |= left[i]! ^ right[i]!;
+  return diff === 0;
+}
+
+async function verifyAuth(
+  header: string | null,
+  expectedToken: string,
+): Promise<boolean> {
   if (!expectedToken) return false;
   if (!header?.startsWith("Bearer ")) return false;
   return timingSafeEqual(header.slice(7), expectedToken);
@@ -103,9 +114,6 @@ export class BackendCallbackWorkflow extends BackendCallbackWorkflowBase {}
 
 const dispatchHandler = createCloudflareDispatchHandler<Env>({
   registry: backendCallbackWorkflowRegistry,
-  auth: {
-    bearerToken: (env) => env.AUTH_TOKEN,
-  },
   maxRequestBytes: 1_048_576,
   resolveWorkflow(eventName, env) {
     return backendCallbackWorkflowRegistry.has(eventName) ? env.WORKFLOW : null;
@@ -114,19 +122,20 @@ const dispatchHandler = createCloudflareDispatchHandler<Env>({
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    if (!env.AUTH_TOKEN) {
+      return new Response("Workflow worker auth is not configured", {
+        status: 500,
+      });
+    }
+
+    if (
+      !(await verifyAuth(request.headers.get("Authorization"), env.AUTH_TOKEN))
+    ) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
     const url = new URL(request.url);
-
     if (url.pathname === "/failed-events" && request.method === "GET") {
-      if (!env.AUTH_TOKEN) {
-        return new Response("Workflow worker auth is not configured", {
-          status: 500,
-        });
-      }
-
-      if (!verifyAuth(request.headers.get("Authorization"), env.AUTH_TOKEN)) {
-        return new Response("Unauthorized", { status: 401 });
-      }
-
       return Response.json({
         info: "Failed events are managed via Cloudflare Queues. Check the Cloudflare dashboard for queue metrics.",
         queues: {

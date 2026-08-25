@@ -55,19 +55,26 @@
     ]
   },
 
+  "services": [
+    {
+      "binding": "BACKEND",
+      "service": "manhali-api-production"
+    }
+  ],
+
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1,
+    "head_sampling_rate": 0.05,
     "logs": {
       "enabled": true,
-      "head_sampling_rate": 1,
+      "head_sampling_rate": 0.05,
       "persist": true,
-      "invocation_logs": true
+      "invocation_logs": false
     },
     "traces": {
       "enabled": true,
       "persist": true,
-      "head_sampling_rate": 1
+      "head_sampling_rate": 0.01
     }
   },
 
@@ -108,9 +115,20 @@
           }
         ]
       },
+      "services": [
+        {
+          "binding": "BACKEND",
+          "service": "manhali-api-sandbox"
+        }
+      ],
       "observability": {
         "enabled": true,
-        "head_sampling_rate": 1
+        "head_sampling_rate": 0.1,
+        "logs": {
+          "enabled": true,
+          "head_sampling_rate": 0.1,
+          "invocation_logs": false
+        }
       }
     }
   }
