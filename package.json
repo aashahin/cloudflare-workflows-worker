@@ -27,7 +27,7 @@
     "tail": "wrangler tail"
   },
   "dependencies": {
-    "@abshahin/workflows-sdk": "^0.1.4"
+    "@abshahin/workflows-sdk": "^0.1.5"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

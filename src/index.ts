@@ -4,6 +4,7 @@
 
 import { WorkflowEntrypoint } from "cloudflare:workers";
 import {
+  createBackendCallbackStepName,
   createBackendCallbackWorkflowRegistry,
   type BackendCallbackWorkflowServices,
 } from "@abshahin/workflows-sdk";
@@ -11,6 +12,7 @@ import {
   createCloudflareDispatchHandler,
   createCloudflareWorkflowDispatch,
   createCloudflareWorkflowEntrypoint,
+  RECOMMENDED_CLOUDFLARE_WORKFLOW_RECEIPT_CLEANUP_CRON,
 } from "@abshahin/workflows-sdk/cloudflare";
 import type { Env } from "./env.js";
 import {
@@ -19,6 +21,15 @@ import {
   storeFailedEvent,
 } from "./lib/failed-events.js";
 import { callBackendService } from "./lib/backend.js";
+import {
+  FAILED_EVENT_ENQUEUE_SWEEP_CRON,
+  sweepFailedEventDeliveries,
+} from "./lib/failed-event-delivery.js";
+import {
+  callbackStepsPolicy,
+  workflowNamePolicy,
+} from "./lib/workflow-policy.js";
+import { D1WorkflowReceiptStore } from "./lib/workflow-receipts.js";
 
 async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -52,21 +63,10 @@ async function verifyAuth(
 }
 
 const backendCallbackWorkflowRegistry = createBackendCallbackWorkflowRegistry({
-  defaultStepName: getBackendCallbackStepName,
+  defaultStepName: createBackendCallbackStepName,
+  workflowNamePolicy,
+  callbackStepsPolicy,
 });
-
-function getBackendCallbackStepName(workflowName: string): string {
-  if (workflowName.startsWith("email/")) {
-    return `send-${workflowName.replace(/[^a-zA-Z0-9]+/g, "-")}`;
-  }
-  if (workflowName.startsWith("notification/")) {
-    return `notify-${workflowName.replace(/[^a-zA-Z0-9]+/g, "-")}`;
-  }
-  if (workflowName === "whatsapp/send-template") {
-    return "send-whatsapp-template";
-  }
-  return `callback-${workflowName.replace(/[^a-zA-Z0-9]+/g, "-")}`;
-}
 
 function createBackendCallbackWorkflowServices(
   env: Env,
@@ -85,7 +85,7 @@ function createBackendCallbackWorkflowServices(
     },
     failedEvents: {
       record(event) {
-        return storeFailedEvent(env.FAILED_EVENTS_QUEUE, event);
+        return storeFailedEvent(env, event);
       },
     },
   };
@@ -101,10 +101,14 @@ const BackendCallbackWorkflowBase: WorkflowBaseClass =
       services: createBackendCallbackWorkflowServices,
       dispatch: createCloudflareWorkflowDispatch<Env>({
         registry: backendCallbackWorkflowRegistry,
-        resolveWorkflow(eventName, env) {
-          return backendCallbackWorkflowRegistry.has(eventName)
-            ? env.WORKFLOW
-            : null;
+        resolveWorkflow(_eventName, env) {
+          return env.WORKFLOW;
+        },
+        resolveWorkflowIdentity(_eventName, env) {
+          return env.WORKFLOW_BINDING_NAME;
+        },
+        resolveReceiptStore(env) {
+          return new D1WorkflowReceiptStore(env.CONTROL_DB);
         },
       }),
     },
@@ -115,8 +119,15 @@ export class BackendCallbackWorkflow extends BackendCallbackWorkflowBase {}
 const dispatchHandler = createCloudflareDispatchHandler<Env>({
   registry: backendCallbackWorkflowRegistry,
   maxRequestBytes: 1_048_576,
-  resolveWorkflow(eventName, env) {
-    return backendCallbackWorkflowRegistry.has(eventName) ? env.WORKFLOW : null;
+  maxEventsPerRequest: 100,
+  resolveWorkflow(_eventName, env) {
+    return env.WORKFLOW;
+  },
+  resolveWorkflowIdentity(_eventName, env) {
+    return env.WORKFLOW_BINDING_NAME;
+  },
+  resolveReceiptStore(env) {
+    return new D1WorkflowReceiptStore(env.CONTROL_DB);
   },
 });
 
@@ -159,6 +170,17 @@ export default {
     controller: ScheduledController,
     env: Env,
   ): Promise<void> {
-    await dispatchHandler.scheduled(controller, env);
+    if (controller.cron === FAILED_EVENT_ENQUEUE_SWEEP_CRON) {
+      await sweepFailedEventDeliveries(env, {
+        now: controller.scheduledTime,
+      });
+      return;
+    }
+    if (
+      controller.cron ===
+      RECOMMENDED_CLOUDFLARE_WORKFLOW_RECEIPT_CLEANUP_CRON
+    ) {
+      await dispatchHandler.scheduled(controller, env);
+    }
   },
 };

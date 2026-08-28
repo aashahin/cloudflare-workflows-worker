@@ -1,4 +1,2 @@
-export type Env = Cloudflare.Env & {
-  /** `services.BACKEND` in wrangler.jsonc. Optional until `wrangler types` is regenerated. */
-  BACKEND?: Fetcher;
-};
+/** Generated from wrangler.jsonc; drift is guarded by wrangler-config.unit.test. */
+export type Env = Cloudflare.Env;

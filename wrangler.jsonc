@@ -8,6 +8,13 @@
   "preview_urls": false,
   "compatibility_date": "2026-03-01",
   "compatibility_flags": ["nodejs_compat"],
+  // Callback dispatch is network-bound. Cap runaway parsing/loops without
+  // granting the five-minute Queue CPU ceiling to ordinary invocations.
+  "limits": { "cpu_ms": 30000 },
+  "vars": {
+    "BACKEND_ORIGIN": "https://api.manhali.com",
+    "WORKFLOW_BINDING_NAME": "manhali-workflow"
+  },
   "rules": [
     { "type": "ESModule", "globs": ["**/*.js"], "fallthrough": true },
     { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }
@@ -22,6 +29,11 @@
       "custom_domain": true
     }
   ],
+  // A bounded 15-minute sweep heals ambiguous failed-event Queue publishes,
+  // refreshes active pointers before Queue retention, and drains indexed
+  // failed-event receipts. The SDK's five-minute receipt cleanup remains
+  // isolated from that heavier sweep.
+  "triggers": { "crons": ["*/15 * * * *", "*/5 * * * *"] },
 
   // Workflows
   // One generic SDK callback Workflow class runs signed backend workflow names.
@@ -33,24 +45,42 @@
     }
   ],
 
+  // Failed-event payloads live in the existing control-plane table. Queue
+  // messages carry only opaque record IDs, avoiding payload duplication/PII.
+  "d1_databases": [
+    {
+      "binding": "CONTROL_DB",
+      "database_name": "manhali-control-production",
+      "database_id": "3bc4f384-bde9-4a29-aa0d-40cd9659f209",
+      "migrations_dir": "migrations"
+    }
+  ],
+
   // Queues (failed event retry)
   // Failed workflow events are sent to a Queue for automatic retry with
-  // progressive delays. After max_retries, messages go to a dead-letter queue
-  // for manual inspection via the Cloudflare dashboard.
+  // progressive delays. The nine-retry limit bounds each physical pointer;
+  // durable D1 processing attempts remain authoritative, and one fenced fresh
+  // pointer may be issued before transport exhaustion. Terminal pointers go to
+  // the dead-letter queue for manual inspection via the Cloudflare dashboard.
   "queues": {
     "producers": [
       {
         "binding": "FAILED_EVENTS_QUEUE",
         "queue": "manhali-failed-events"
+      },
+      {
+        "binding": "FAILED_EVENTS_DLQ",
+        "queue": "manhali-failed-events-dlq"
       }
     ],
     "consumers": [
       {
         "queue": "manhali-failed-events",
-        "max_retries": 10,
+        "max_retries": 9,
         "dead_letter_queue": "manhali-failed-events-dlq",
         "max_batch_size": 10,
-        "max_batch_timeout": 30
+        "max_batch_timeout": 30,
+        "max_concurrency": 4
       }
     ]
   },
@@ -89,8 +119,15 @@
       "account_id": "a793ff57a25dfe6874a8738f9addd295",
       "workers_dev": true,
       "preview_urls": true,
+      // Workers Free rejects explicit CPU limits; this overrides the inherited production cap.
+      "limits": {},
+      "vars": {
+        "BACKEND_ORIGIN": "https://api.dawat.blog",
+        "WORKFLOW_BINDING_NAME": "manhali-workflow-sandbox"
+      },
       // No manhali.com custom domain on the sandbox account.
       "routes": [],
+      "triggers": { "crons": ["*/15 * * * *", "*/5 * * * *"] },
       "workflows": [
         {
           "name": "manhali-workflow-sandbox",
@@ -98,20 +135,33 @@
           "class_name": "BackendCallbackWorkflow"
         }
       ],
+      "d1_databases": [
+        {
+          "binding": "CONTROL_DB",
+          "database_name": "manhali-control-sandbox",
+          "database_id": "8d19dd98-a4ef-42a9-9aa7-a69344a4a2e6",
+          "migrations_dir": "migrations"
+        }
+      ],
       "queues": {
         "producers": [
           {
             "binding": "FAILED_EVENTS_QUEUE",
             "queue": "manhali-failed-events-sandbox"
+          },
+          {
+            "binding": "FAILED_EVENTS_DLQ",
+            "queue": "manhali-failed-events-sandbox-dlq"
           }
         ],
         "consumers": [
           {
             "queue": "manhali-failed-events-sandbox",
-            "max_retries": 10,
+            "max_retries": 9,
             "dead_letter_queue": "manhali-failed-events-sandbox-dlq",
             "max_batch_size": 10,
-            "max_batch_timeout": 30
+            "max_batch_timeout": 30,
+            "max_concurrency": 4
           }
         ]
       },
@@ -127,6 +177,7 @@
         "logs": {
           "enabled": true,
           "head_sampling_rate": 0.1,
+          "persist": true,
           "invocation_logs": false
         }
       }

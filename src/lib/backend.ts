@@ -1,16 +1,20 @@
 // ─── Shared Backend Utilities ────────────────────────────────────────────────
 // Common helpers used by all workflow classes.
 
-import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../env.js";
+import {
+  isPermanentBackendStatus,
+  readBoundedBackendErrorBody,
+} from "./backend-response.js";
 import { fetchBackendExecute } from "./backend-transport.js";
 
+export const BACKEND_CALLBACK_TIMEOUT_MS = 15_000;
+
 export function isNonRetryableFailure(err: unknown): boolean {
-  if (err instanceof NonRetryableError) return true;
   if (!(err instanceof Error)) return false;
   return (
     err.name === "NonRetryableError" ||
-    err.message.includes("NonRetryableError")
+    err.message.startsWith("NonRetryableError:")
   );
 }
 
@@ -26,6 +30,16 @@ export async function callBackendService(
   traceId?: string,
   eventId?: string,
 ): Promise<void> {
+  if (
+    typeof env.BACKEND_CALLBACK_TOKEN !== "string" ||
+    env.BACKEND_CALLBACK_TOKEN.trim().length === 0
+  ) {
+    const error = new Error(
+      "NonRetryableError: BACKEND_CALLBACK_TOKEN is required",
+    );
+    error.name = "NonRetryableError";
+    throw error;
+  }
   const tenantId =
     "tenantId" in data && typeof data.tenantId === "string"
       ? data.tenantId.trim()
@@ -35,39 +49,41 @@ export async function callBackendService(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${env.AUTH_TOKEN}`,
+      Authorization: `Bearer ${env.BACKEND_CALLBACK_TOKEN}`,
       ...(tenantId ? { "x-tenant-id": tenantId } : {}),
       ...(traceId ? { "X-Trace-Id": traceId } : {}),
       ...(eventId ? { "X-Workflow-Event-Id": eventId } : {}),
     },
     body: JSON.stringify(data),
+    signal: AbortSignal.timeout(BACKEND_CALLBACK_TIMEOUT_MS),
   });
 
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
+    const body = await readBoundedBackendErrorBody(response);
 
     // Only truly permanent client errors are non-retryable:
-    // - 400: malformed or incomplete workflow payload
+    // - 400/413/422: malformed, oversized, or invalid workflow payload
+    // - 401/403: callback-token/configuration failures require an operator
+    //   deploy; repeating billed callbacks cannot repair them
     // - 404: resource doesn't exist
     // - 409: permanent conflict (transient/not-ready states should use 425)
     // - 422: validation failure (bad input shape)
     // These will never succeed without code or data changes.
-    const NON_RETRYABLE_STATUSES = [400, 404, 409, 422];
-
-    if (NON_RETRYABLE_STATUSES.includes(response.status)) {
+    if (isPermanentBackendStatus(response.status)) {
       // Prefix the message with "NonRetryableError" so the failure is still
       // detectable after Cloudflare re-throws it across the step boundary,
       // where the error's prototype/name may not survive but the message does.
-      throw new NonRetryableError(
-        `NonRetryableError: Backend ${path} failed (${response.status}): ${body}`,
+      const error = new Error(
+        `NonRetryableError: Backend ${path} failed (${response.status})${body ? `: ${body}` : ""}`,
       );
+      error.name = "NonRetryableError";
+      throw error;
     }
 
-    // Everything else is retryable:
-    // - 401/403: auth/config issues that can be fixed between retries
-    // - 429: rate limiting
-    // - 5xx: transient server errors
-    throw new Error(`Backend ${path} failed (${response.status}): ${body}`);
+    // 408/425/429 and 5xx remain retryable transient failures.
+    throw new Error(
+      `Backend ${path} failed (${response.status})${body ? `: ${body}` : ""}`,
+    );
   }
 
   await response.body?.cancel();
