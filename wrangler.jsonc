@@ -51,7 +51,7 @@
     {
       "binding": "CONTROL_DB",
       "database_name": "manhali-control-production",
-      "database_id": "3bc4f384-bde9-4a29-aa0d-40cd9659f209",
+      "database_id": "e96b757e-47ed-45b6-ac91-f9b1f39000b3",
       "migrations_dir": "migrations"
     }
   ],
