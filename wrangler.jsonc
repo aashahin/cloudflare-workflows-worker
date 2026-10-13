@@ -122,7 +122,7 @@
       // Workers Free rejects explicit CPU limits; this overrides the inherited production cap.
       "limits": {},
       "vars": {
-        "BACKEND_ORIGIN": "https://api.dawat.blog",
+        "BACKEND_ORIGIN": "https://api.manhali.dev",
         "WORKFLOW_BINDING_NAME": "manhali-workflow-sandbox"
       },
       // No manhali.com custom domain on the sandbox account.
